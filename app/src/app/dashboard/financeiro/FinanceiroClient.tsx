@@ -61,7 +61,7 @@ const nomeMes = (mesStr: string) => {
 // ============================================================
 // COMPONENTE PRINCIPAL
 // ============================================================
-export default function FinanceiroClient({ fotografoId, nomeStudio, parcelasIniciais, hojeStr }: Props) {
+export default function FinanceiroClient({ fotografoId, nomeStudio, hojeStr }: Props) {
   const [activeTab, setActiveTab] = useState<TabKey>('fluxo')
   const [lancamentos, setLancamentos] = useState<Lancamento[]>([])
   const [categorias, setCategorias] = useState<Categoria[]>([])
