@@ -76,7 +76,7 @@ export default function Sidebar({ isCollapsed, toggleCollapse }: SidebarProps) {
   const configuracoes = navItems.filter(i => i.section === 'configuracoes')
 
   return (
-    <aside className="sidebar animate-slide-left">
+    <aside className="sidebar">
       {/* Logo */}
       <div className="sidebar-logo">
         <div className="sidebar-logo-mark">M</div>
