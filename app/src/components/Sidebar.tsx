@@ -122,7 +122,7 @@ export default function Sidebar({ isCollapsed, toggleCollapse }: SidebarProps) {
 
       {/* Footer / Theme Toggle & Logout */}
       <div className="sidebar-footer" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-        <button onClick={toggleCollapse} className="sidebar-item" style={{ cursor: 'pointer', marginBottom: '8px' }} title={isCollapsed ? 'Expandir Menu' : undefined}>
+        <button onClick={toggleCollapse} className="sidebar-item collapse-btn" style={{ cursor: 'pointer', marginBottom: '8px' }} title={isCollapsed ? 'Expandir Menu' : undefined}>
           {isCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
           <span className="sidebar-item-label">Recolher Menu</span>
         </button>
