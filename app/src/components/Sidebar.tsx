@@ -19,6 +19,8 @@ import {
   Target,
   DollarSign,
   UserCheck,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
 
 const navItems = [
@@ -34,7 +36,12 @@ const navItems = [
   { href: '/dashboard/configuracoes', label: 'Configurações', icon: Settings, section: 'configuracoes' },
 ]
 
-export default function Sidebar() {
+type SidebarProps = {
+  isCollapsed: boolean
+  toggleCollapse: () => void
+}
+
+export default function Sidebar({ isCollapsed, toggleCollapse }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -87,9 +94,10 @@ export default function Sidebar() {
               key={item.href}
               href={item.href}
               className={`sidebar-item ${isActive ? 'active' : ''}`}
+              title={isCollapsed ? item.label : undefined}
             >
               <Icon size={17} />
-              {item.label}
+              <span className="sidebar-item-label">{item.label}</span>
             </Link>
           )
         })}
@@ -103,9 +111,10 @@ export default function Sidebar() {
               key={item.href}
               href={item.href}
               className={`sidebar-item ${isActive ? 'active' : ''}`}
+              title={isCollapsed ? item.label : undefined}
             >
               <Icon size={17} />
-              {item.label}
+              <span className="sidebar-item-label">{item.label}</span>
             </Link>
           )
         })}
@@ -113,13 +122,18 @@ export default function Sidebar() {
 
       {/* Footer / Theme Toggle & Logout */}
       <div className="sidebar-footer" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-        <button onClick={toggleTheme} className="sidebar-item" style={{ cursor: 'pointer' }}>
-          {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
-          {theme === 'light' ? 'Modo Escuro' : 'Modo Claro'}
+        <button onClick={toggleCollapse} className="sidebar-item" style={{ cursor: 'pointer', marginBottom: '8px' }} title={isCollapsed ? 'Expandir Menu' : undefined}>
+          {isCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
+          <span className="sidebar-item-label">Recolher Menu</span>
         </button>
-        <button onClick={handleLogout} className="sidebar-item" style={{ color: 'var(--color-danger)', cursor: 'pointer' }}>
+
+        <button onClick={toggleTheme} className="sidebar-item" style={{ cursor: 'pointer' }} title={isCollapsed ? (theme === 'light' ? 'Modo Escuro' : 'Modo Claro') : undefined}>
+          {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
+          <span className="sidebar-item-label">{theme === 'light' ? 'Modo Escuro' : 'Modo Claro'}</span>
+        </button>
+        <button onClick={handleLogout} className="sidebar-item" style={{ color: 'var(--color-danger)', cursor: 'pointer' }} title={isCollapsed ? 'Sair' : undefined}>
           <LogOut size={17} />
-          Sair da conta
+          <span className="sidebar-item-label">Sair da conta</span>
         </button>
       </div>
     </aside>

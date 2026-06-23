@@ -382,6 +382,27 @@ a:hover { color: var(--color-accent-hover); }
   height: 100vh;
   z-index: 100;
   overflow-y: auto;
+  transition: width var(--transition-normal), transform var(--transition-normal);
+}
+
+.dashboard-layout.sidebar-collapsed {
+  --sidebar-width: 80px;
+}
+
+.sidebar-collapsed .sidebar-logo {
+  justify-content: center;
+  padding: 20px 0;
+}
+
+.sidebar-collapsed .sidebar-logo-text,
+.sidebar-collapsed .sidebar-item-label,
+.sidebar-collapsed .sidebar-section-label {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar-item {
+  justify-content: center;
+  padding: 12px;
 }
 
 /* Utilidade de Card Premium */
@@ -489,6 +510,7 @@ a:hover { color: var(--color-accent-hover); }
   flex-direction: column;
   max-width: calc(100vw - var(--sidebar-width));
   overflow-x: hidden;
+  transition: margin-left var(--transition-normal), max-width var(--transition-normal);
 }
 
 .topbar {
@@ -634,9 +656,43 @@ a:hover { color: var(--color-accent-hover); }
 /* ============================================================
    RESPONSIVIDADE
    ============================================================ */
+.hamburger-btn {
+  display: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  border: none;
+  cursor: pointer;
+  padding: 10px;
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 101;
+}
+
+.mobile-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(2px);
+  z-index: 90;
+  opacity: 0;
+  transition: opacity var(--transition-normal);
+}
+
 @media (max-width: 768px) {
+  .dashboard-layout { --sidebar-width: 260px; }
   .sidebar { transform: translateX(-100%); }
-  .main-content { margin-left: 0; }
+  .dashboard-layout.mobile-open .sidebar { transform: translateX(0); }
+  .main-content { margin-left: 0; max-width: 100vw; }
   .form-grid-2 { grid-template-columns: 1fr; }
-  .page-content { padding: 16px; }
+  .page-content { padding: 16px; padding-top: 60px; }
+  .topbar { padding-left: 60px; }
+  
+  .hamburger-btn { display: flex; align-items: center; justify-content: center; }
+  
+  .dashboard-layout.mobile-open .mobile-overlay {
+    display: block;
+    opacity: 1;
+  }
 }
