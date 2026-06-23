@@ -150,14 +150,8 @@ export default function EstrategiaClient({ fotografoId }: { fotografoId: string 
       if(res.ok) {
         setIsModalObjOpen(false)
         fetchOkrs()
-      } else {
-        const data = await res.json()
-        showError(data.error || 'Erro ao salvar objetivo')
       }
-    } catch (err: any) { 
-      showError(err.message || 'Erro de conexão')
-      console.error(err) 
-    }
+    } catch (err) { console.error(err) }
   }
 
   const handleCreateKR = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -182,14 +176,8 @@ export default function EstrategiaClient({ fotografoId }: { fotografoId: string 
       if(res.ok) {
         setIsModalKROpen(false)
         fetchOkrs()
-      } else {
-        const data = await res.json()
-        showError(data.error || 'Erro ao salvar KR')
       }
-    } catch (err: any) { 
-      showError(err.message || 'Erro de conexão')
-      console.error(err) 
-    }
+    } catch (err) { console.error(err) }
   }
 
   // --- FORMS DE EDIÇÃO ---
