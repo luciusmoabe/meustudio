@@ -40,7 +40,8 @@ export default function ModalNovoLead({ fotografoId, etapas, onLeadCriado, onClo
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  const firstService = tiposSessao && tiposSessao.length > 0 ? tiposSessao[0] : null
+  const pacotes = tiposSessao?.filter(t => t.is_pacote) || []
+  const firstService = pacotes.length > 0 ? pacotes[0] : null
   
   const [form, setForm] = useState({
     nome_cliente: '',
@@ -56,7 +57,7 @@ export default function ModalNovoLead({ fotografoId, etapas, onLeadCriado, onClo
   // Estado para armazenar as respostas do formulário dinâmico
   const [respostas, setRespostas] = useState<Record<string, any>>({})
 
-  const selectedService = tiposSessao?.find(t => t.id === form.tipo_servico)
+  const selectedService = pacotes.find(t => t.id === form.tipo_servico)
   const formFields = selectedService?.servico_formularios?.sort((a, b) => a.ordem - b.ordem) || []
 
   // Filtrar o pipeline (se o pacote tiver um funil exclusivo, usa ele. Senão, usa o padrão)
@@ -76,7 +77,7 @@ export default function ModalNovoLead({ fotografoId, etapas, onLeadCriado, onClo
   }
 
   function handleServiceChange(val: string) {
-    const srv = tiposSessao?.find(t => t.id === val)
+    const srv = pacotes.find(t => t.id === val)
     setForm(prev => ({
       ...prev,
       tipo_servico: val,
@@ -175,10 +176,10 @@ export default function ModalNovoLead({ fotografoId, etapas, onLeadCriado, onClo
               <div className="form-group" style={{ margin: 0 }}>
                 <label className="form-label"><Tag size={12} style={{ display: 'inline', marginRight: '5px' }} /> Pacote / Serviço Pretendido</label>
                 <select className="form-select" value={form.tipo_servico} onChange={e => handleServiceChange(e.target.value)} style={{ fontWeight: 600, fontSize: '0.9375rem', padding: '10px 12px' }}>
-                  {tiposSessao?.map(t => (
-                    <option key={t.id} value={t.id}>{t.is_pacote ? '📦 ' : '📸 '}{t.nome}</option>
+                  {pacotes.map(t => (
+                    <option key={t.id} value={t.id}>📦 {t.nome}</option>
                   ))}
-                  {(!tiposSessao || tiposSessao.length === 0) && <option value="">Cadastre um serviço nas Configurações</option>}
+                  {pacotes.length === 0 && <option value="">Crie um Pacote Comercial primeiro</option>}
                 </select>
               </div>
 
