@@ -20,12 +20,18 @@ export default async function ServicosConfigPage() {
 
   if (!perfil) redirect('/dashboard/perfil')
 
-  // Busca os tipos de sessão cadastrados com seus respectivos custos vinculados
+  // Busca os tipos de sessão cadastrados com seus respectivos custos, itens de pacote e formulários vinculados
   const { data: servicos } = await supabase
     .from('tipos_sessao')
     .select(`
       *,
-      custos_servico (*)
+      custos_servico (*),
+      pacote_servicos (
+        id,
+        servico_id,
+        quantidade
+      ),
+      servico_formularios (*)
     `)
     .eq('fotografo_id', perfil.id)
     .order('criado_em', { ascending: true })
