@@ -36,10 +36,18 @@ export default async function ServicosConfigPage() {
     .eq('fotografo_id', perfil.id)
     .order('criado_em', { ascending: true })
 
+  // Busca todas as etapas de pipeline deste fotógrafo
+  const { data: etapas } = await supabase
+    .from('etapas_pipeline')
+    .select('*')
+    .eq('fotografo_id', perfil.id)
+    .order('ordem', { ascending: true })
+
   return (
     <ServicosClient
       fotografoId={perfil.id}
       servicosIniciais={servicos ?? []}
+      etapasIniciais={etapas ?? []}
     />
   )
 }
