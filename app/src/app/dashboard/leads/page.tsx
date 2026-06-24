@@ -53,10 +53,10 @@ export default async function LeadsPage() {
     .eq('fotografo_id', perfil.id)
     .order('criado_em', { ascending: false })
 
-  // Carrega os tipos de sessão customizados do fotógrafo
+  // Carrega os tipos de sessão customizados do fotógrafo com seus formulários
   const { data: tiposSessao } = await supabase
     .from('tipos_sessao')
-    .select('*')
+    .select('*, servico_formularios(*)')
     .eq('fotografo_id', perfil.id)
     .order('nome', { ascending: true })
 

@@ -18,6 +18,7 @@ type Etapa = {
   ordem: number
   cor_hex: string
   tipo_pipeline: string
+  pacote_id?: string | null
 }
 
 type Lead = {
@@ -82,6 +83,8 @@ type TipoSessao = {
   limite_fotos_def: number
   cor_hex: string
   descricao: string | null
+  is_pacote?: boolean
+  servico_formularios?: { id: string; pergunta: string; tipo_resposta: string; obrigatorio: boolean; ordem: number }[]
 }
 
 type Props = {
