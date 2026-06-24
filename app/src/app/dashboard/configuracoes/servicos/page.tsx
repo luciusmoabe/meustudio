@@ -26,7 +26,7 @@ export default async function ServicosConfigPage() {
     .select(`
       *,
       custos_servico (*),
-      pacote_servicos (
+      pacote_servicos!pacote_servicos_pacote_id_fkey (
         id,
         servico_id,
         quantidade
