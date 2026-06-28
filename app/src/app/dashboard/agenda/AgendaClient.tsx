@@ -6,7 +6,7 @@ import {
   Calendar as CalendarIcon, Clock, MapPin, Plus,
   Kanban, Settings2, Loader2, Image as ImageIcon,
   CheckCircle2, X, ChevronLeft, ChevronRight,
-  MoreHorizontal, Camera
+  MoreHorizontal, Camera, GripVertical
 } from 'lucide-react'
 import {
   format, addMonths, subMonths, startOfMonth, endOfMonth,
@@ -388,31 +388,23 @@ export default function AgendaClient({ fotografoId, sessoesIniciais, leadsDispon
                 {etapas.map(etapa => {
                   const sessoesEtapa = sessoes.filter(s => s.etapa_producao_id === etapa.id && !['cancelada', 'entregue'].includes(s.status))
                   return (
-                    <div key={etapa.id} 
-                      draggable={true}
-                      onDragStart={(e) => {
-                        e.stopPropagation();
-                        e.dataTransfer.setData('colId', etapa.id);
-                        e.dataTransfer.effectAllowed = 'move';
-                        setTimeout(() => setDraggedColumnId(etapa.id), 0);
-                      }}
-                      onDragEnd={() => setDraggedColumnId(null)}
-                      onDragOver={(e) => { 
-                        e.preventDefault(); 
+                    <div key={etapa.id}
+                      onDragOver={(e) => {
+                        e.preventDefault();
                         if (!draggedColumnId && !draggedSessaoId) return;
-                        setDragOverEtapaId(etapa.id) 
+                        setDragOverEtapaId(etapa.id)
                       }}
                       onDragLeave={() => setDragOverEtapaId(null)}
                       onDrop={(e) => {
                         e.preventDefault();
                         setDragOverEtapaId(null);
-                        
+
                         const colId = e.dataTransfer.getData('colId');
                         if (colId) {
                           reordenarEtapas(colId, etapa.id);
                           return;
                         }
-                        
+
                         const sessaoId = e.dataTransfer.getData('sessaoId');
                         if (sessaoId) moverParaEtapa(sessaoId, etapa.id);
                       }}
@@ -427,12 +419,23 @@ export default function AgendaClient({ fotografoId, sessoesIniciais, leadsDispon
                       transition: 'all 0.2s ease',
                       opacity: draggedColumnId === etapa.id ? 0.5 : 1,
                     }}>
-                      <div style={{
+                      <div
+                        draggable={true}
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData('colId', etapa.id);
+                          e.dataTransfer.effectAllowed = 'move';
+                          setTimeout(() => setDraggedColumnId(etapa.id), 0);
+                        }}
+                        onDragEnd={() => setDraggedColumnId(null)}
+                        title="Arraste para reordenar a etapa"
+                        style={{
                         padding: '12px 14px', borderBottom: '1px solid var(--color-border-subtle)',
                         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                         borderTop: `3px solid ${etapa.cor_hex}`, borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0',
+                        cursor: 'grab',
                       }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <GripVertical size={14} style={{ color: 'var(--color-text-muted)', flexShrink: 0 }} />
                           <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>{etapa.nome_etapa}</span>
                           <span style={{ background: 'var(--color-bg-elevated)', color: 'var(--color-text-muted)', padding: '1px 8px', borderRadius: 'var(--radius-full)', fontSize: '0.75rem', fontWeight: 600 }}>
                             {sessoesEtapa.length}

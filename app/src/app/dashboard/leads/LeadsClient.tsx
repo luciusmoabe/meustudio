@@ -7,6 +7,7 @@ import {
   Phone, Calendar, DollarSign,
   ThumbsUp, ThumbsDown, MoreHorizontal, Trash2,
   Users, TrendingUp, Settings2, Loader2, ExternalLink,
+  GripVertical,
 } from 'lucide-react'
 import ModalNovoLead from '@/components/ModalNovoLead'
 import ModalPerdeu from '@/components/ModalPerdeu'
@@ -182,27 +183,33 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
 
   async function reordenarEtapas(draggedId: string, targetId: string) {
     if (draggedId === targetId) return
-    
-    const newEtapas = [...etapas]
-    const draggedIndex = newEtapas.findIndex(e => e.id === draggedId)
-    const targetIndex = newEtapas.findIndex(e => e.id === targetId)
-    
+
+    // Reordena sobre as colunas visíveis. No modo "Todos os Funis" cada coluna
+    // representa um grupo de etapas (id = "id1,id2,..."); fora dele é uma etapa única.
+    const cols = [...etapasKanban]
+    const draggedIndex = cols.findIndex(c => c.id === draggedId)
+    const targetIndex = cols.findIndex(c => c.id === targetId)
+
     if (draggedIndex === -1 || targetIndex === -1) return
-    
-    const [draggedItem] = newEtapas.splice(draggedIndex, 1)
-    newEtapas.splice(targetIndex, 0, draggedItem)
-    
-    const updatedEtapas = newEtapas.map((e, index) => ({
-      ...e,
-      ordem: index + 1
-    }))
-    
-    setEtapas(updatedEtapas)
-    
-    // Execute sequential updates (constraint must be dropped beforehand)
-    for (const e of updatedEtapas) {
-      await supabase.from('etapas_pipeline').update({ ordem: e.ordem }).eq('id', e.id)
-    }
+
+    const [movido] = cols.splice(draggedIndex, 1)
+    cols.splice(targetIndex, 0, movido)
+
+    // Expande os grupos: cada etapa real recebe a ordem da sua coluna.
+    const novaOrdem = new Map<string, number>()
+    cols.forEach((c, index) => {
+      c.id.split(',').forEach(realId => novaOrdem.set(realId, index + 1))
+    })
+
+    // Optimistic update
+    setEtapas(prev => prev.map(e => novaOrdem.has(e.id) ? { ...e, ordem: novaOrdem.get(e.id)! } : e))
+
+    // Persiste apenas as etapas afetadas (constraint de ordem já foi removida)
+    await Promise.all(
+      [...novaOrdem.entries()].map(([id, ordem]) =>
+        supabase.from('etapas_pipeline').update({ ordem }).eq('id', id)
+      )
+    )
   }
 
   async function excluirLead(leadId: string) {
@@ -441,31 +448,23 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
                 }
 
                 return (
-                <div key={etapa.id} 
-                  draggable={true}
-                  onDragStart={(e) => {
-                    e.stopPropagation();
-                    e.dataTransfer.setData('colId', etapa.id);
-                    e.dataTransfer.effectAllowed = 'move';
-                    setTimeout(() => setDraggedColumnId(etapa.id), 0);
-                  }}
-                  onDragEnd={() => setDraggedColumnId(null)}
-                  onDragOver={(e) => { 
-                    e.preventDefault(); 
-                    if (!draggedColumnId && !isAllowed) return; 
-                    setDragOverEtapaId(etapa.id) 
+                <div key={etapa.id}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    if (!draggedColumnId && !isAllowed) return;
+                    setDragOverEtapaId(etapa.id)
                   }}
                   onDragLeave={() => setDragOverEtapaId(null)}
                   onDrop={(e) => {
                     e.preventDefault();
                     setDragOverEtapaId(null);
-                    
+
                     const colId = e.dataTransfer.getData('colId');
                     if (colId) {
                       reordenarEtapas(colId, etapa.id);
                       return;
                     }
-                    
+
                     if (!isAllowed) return;
                     const leadId = e.dataTransfer.getData('leadId');
                     if (leadId) moverParaEtapa(leadId, etapa.id);
@@ -482,17 +481,27 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
                   opacity: draggedLeadId && !isAllowed ? 0.3 : (draggedColumnId === etapa.id ? 0.5 : 1),
                   filter: draggedLeadId && !isAllowed ? 'grayscale(100%)' : 'none',
                   pointerEvents: draggedLeadId && !isAllowed ? 'none' : 'auto',
-                  cursor: draggedLeadId ? 'default' : 'grab'
                 }}>
-                  {/* Header da coluna */}
-                  <div style={{
+                  {/* Header da coluna (alça de arraste para reordenar) */}
+                  <div
+                    draggable={true}
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('colId', etapa.id);
+                      e.dataTransfer.effectAllowed = 'move';
+                      setTimeout(() => setDraggedColumnId(etapa.id), 0);
+                    }}
+                    onDragEnd={() => setDraggedColumnId(null)}
+                    title="Arraste para reordenar a etapa"
+                    style={{
                     padding: '12px 14px',
                     borderBottom: '1px solid var(--color-border-subtle)',
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     borderTop: `3px solid ${etapa.cor_hex}`,
                     borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0',
+                    cursor: 'grab',
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <GripVertical size={14} style={{ color: 'var(--color-text-muted)', flexShrink: 0 }} />
                       <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>{etapa.nome_etapa}</span>
                       <span style={{
                         background: 'var(--color-bg-elevated)', color: 'var(--color-text-muted)',
