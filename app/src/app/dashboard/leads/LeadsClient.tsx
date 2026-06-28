@@ -7,11 +7,13 @@ import {
   Phone, Calendar, DollarSign,
   ThumbsUp, ThumbsDown, MoreHorizontal, Trash2,
   Users, TrendingUp, Settings2, Loader2, ExternalLink,
-  GripVertical,
+  GripVertical, Edit2,
 } from 'lucide-react'
 import ModalNovoLead from '@/components/ModalNovoLead'
+import ModalEditarLead from '@/components/ModalEditarLead'
 import ModalPerdeu from '@/components/ModalPerdeu'
 import ModalGanhou from '@/components/ModalGanhou'
+import JornadaClienteKanban from '@/components/JornadaClienteKanban'
 
 type Etapa = {
   id: string
@@ -21,7 +23,7 @@ type Etapa = {
   tipo_pipeline: string
   pacote_id?: string | null
   meta_acoes?: number
-  transicoes_permitidas?: number[] | null
+  transicoes_permitidas?: string[] | null
 }
 
 type Lead = {
@@ -72,19 +74,26 @@ const ETAPAS_DEFAULT = [
   { nome_etapa: 'Aguardando Sinal', ordem: 4, cor_hex: '#34d399' },
 ]
 
-// Resolve o UUID do pacote/serviço do lead via pacote_id direto ou por correspondência de nome.
-// Aplica normalização que remove artigos portugueses para lidar com variações como
-// "Ensaio de gestante" vs "Ensaio Gestante".
-function resolveLeadPacoteId(lead: Lead, tiposSessao: TipoSessao[]): string | null {
-  if (lead.pacote_id) return lead.pacote_id
-  const strip = (s: string) =>
-    s.toLowerCase().replace(/\b(de|da|do|dos|das|e|o|a|os|as|em)\b/g, '').replace(/\s+/g, ' ').trim()
-  const normalTipo = strip(lead.tipo_servico)
-  return tiposSessao.find(t =>
-    t.nome.toLowerCase() === lead.tipo_servico.toLowerCase() ||
-    t.id === lead.tipo_servico ||
-    strip(t.nome) === normalTipo
-  )?.id ?? null
+function resolveLeadServicosIds(lead: Lead, tiposSessao: TipoSessao[]): string[] {
+  let pacoteId = lead.pacote_id
+  if (!pacoteId && lead.tipo_servico) {
+    const strip = (s: string) =>
+      s.toLowerCase().replace(/\b(de|da|do|dos|das|e|o|a|os|as|em)\b/g, '').replace(/\s+/g, ' ').trim()
+    const normalTipo = strip(lead.tipo_servico)
+    pacoteId = tiposSessao.find(t =>
+      t.nome.toLowerCase() === lead.tipo_servico.toLowerCase() ||
+      t.id === lead.tipo_servico ||
+      strip(t.nome) === normalTipo
+    )?.id ?? null
+  }
+  
+  if (!pacoteId) return []
+  
+  const p = tiposSessao.find(t => t.id === pacoteId)
+  if (p && p.is_pacote && p.pacote_servicos) {
+    return [pacoteId, ...p.pacote_servicos.map(ps => ps.servico_id)]
+  }
+  return [pacoteId]
 }
 
 function formatCurrency(val: number | null) {
@@ -106,6 +115,7 @@ type TipoSessao = {
   cor_hex: string
   descricao: string | null
   is_pacote?: boolean
+  pacote_servicos?: { id: string; servico_id: string; quantidade: number }[]
   servico_formularios?: { id: string; pergunta: string; tipo_resposta: string; obrigatorio: boolean; ordem: number }[]
 }
 
@@ -114,9 +124,11 @@ type Props = {
   etapasIniciais: Etapa[]
   leadsIniciais: Lead[]
   tiposSessao: TipoSessao[]
+  etapasProducaoIniciais: any[]
+  sessoesIniciais: any[]
 }
 
-export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais, tiposSessao }: Props) {
+export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais, tiposSessao, etapasProducaoIniciais, sessoesIniciais }: Props) {
   const supabase = createClient()
   const [etapas, setEtapas] = useState<Etapa[]>(etapasIniciais)
   const [leads, setLeads] = useState<Lead[]>(leadsIniciais)
@@ -128,8 +140,11 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
   const [showModal, setShowModal] = useState(false)
   const [modalPerdeu, setModalPerdeu] = useState<Lead | null>(null)
   const [modalGanhou, setModalGanhou] = useState<Lead | null>(null)
+  const [modalExcluir, setModalExcluir] = useState<Lead | null>(null)
   const [modalNovaAcao, setModalNovaAcao] = useState<Lead | null>(null)
   const [modalHistorico, setModalHistorico] = useState<Lead | null>(null)
+  const [modalEditar, setModalEditar] = useState<Lead | null>(null)
+  const [jornadaAtiva, setJornadaAtiva] = useState<'lead' | 'cliente'>('lead')
   const [novaAcaoTitulo, setNovaAcaoTitulo] = useState('')
   const [salvandoAcao, setSalvandoAcao] = useState(false)
   const [leadMenuOpen, setLeadMenuOpen] = useState<string | null>(null)
@@ -171,8 +186,8 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
       const lead = leads.find(l => l.id === leadId)
       if (lead) {
         const ids = etapaId.split(',')
-        const pacoteIdDoLead = resolveLeadPacoteId(lead, tiposSessao)
-        const especifica = etapas.find(e => ids.includes(e.id) && (e.pacote_id ?? null) === pacoteIdDoLead)
+        const servicosIdsDoLead = resolveLeadServicosIds(lead, tiposSessao)
+        const especifica = etapas.find(e => ids.includes(e.id) && e.pacote_id && servicosIdsDoLead.includes(e.pacote_id))
         if (especifica) {
           finalEtapaId = especifica.id
         } else {
@@ -181,8 +196,50 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
         }
       }
     }
+
+    // Validação de regras de transição (Bug 3 fix)
+    const lead = leads.find(l => l.id === leadId)
+    if (lead && lead.etapa_pipeline_id && lead.etapa_pipeline_id !== finalEtapaId) {
+      const servicosIdsDoLead = resolveLeadServicosIds(lead, tiposSessao)
+      const etapaAtual = etapas.find(e => e.id === lead.etapa_pipeline_id)
+      let etapaOrigemNoFunil = etapas.find(e =>
+        e.pacote_id && servicosIdsDoLead.includes(e.pacote_id) &&
+        e.nome_etapa.trim().toLowerCase() === (etapaAtual?.nome_etapa ?? '').trim().toLowerCase()
+      )
+      if (!etapaOrigemNoFunil) {
+        etapaOrigemNoFunil = etapas.find(e =>
+          !e.pacote_id &&
+          e.nome_etapa.trim().toLowerCase() === (etapaAtual?.nome_etapa ?? '').trim().toLowerCase()
+        )
+      }
+      if (!etapaOrigemNoFunil) {
+        etapaOrigemNoFunil = etapaAtual
+      }
+      let regras = etapaOrigemNoFunil?.transicoes_permitidas
+      if (etapaOrigemNoFunil && etapaOrigemNoFunil.pacote_id && !servicosIdsDoLead.includes(etapaOrigemNoFunil.pacote_id)) {
+        // Se a etapa origem for de outro pacote (fallback extremo por falta de etapa genérica), não impõe as regras dela ao lead
+        regras = null
+      }
+      if (regras && regras.length > 0) {
+        // Resolve o ID real da etapa destino no funil do lead
+        const etapaDestinoNoFunil = etapas.find(e =>
+          e.id === finalEtapaId || (
+            e.pacote_id && servicosIdsDoLead.includes(e.pacote_id) &&
+            e.nome_etapa.trim().toLowerCase() === (etapas.find(x => x.id === finalEtapaId)?.nome_etapa ?? '').trim().toLowerCase()
+          )
+        )
+        const idParaValidar = etapaDestinoNoFunil?.id ?? finalEtapaId
+        if (!regras.includes(idParaValidar)) {
+          console.warn(`Movimento bloqueado: transição de "${etapaAtual?.nome_etapa}" para "${etapaDestinoNoFunil?.nome_etapa}" não é permitida.`)
+          setDraggedLeadId(null)
+          setDragOverEtapaId(null)
+          return
+        }
+      }
+    }
     
-    // Optimistic update
+    // Optimistic update — guardar estado anterior para rollback
+    const leadAnterior = leads.find(l => l.id === leadId)
     setLeads(prev => prev.map(l => l.id === leadId ? { 
       ...l, 
       etapa_pipeline_id: finalEtapaId,
@@ -192,7 +249,14 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
     setDraggedLeadId(null)
     setDragOverEtapaId(null)
     
-    await supabase.from('leads_propostas').update({ etapa_pipeline_id: finalEtapaId }).eq('id', leadId)
+    const { error } = await supabase.from('leads_propostas').update({ etapa_pipeline_id: finalEtapaId }).eq('id', leadId)
+    if (error) {
+      // Rollback do optimistic update em caso de erro do trigger server-side
+      console.error('Erro ao mover lead:', error.message)
+      if (leadAnterior) {
+        setLeads(prev => prev.map(l => l.id === leadId ? leadAnterior : l))
+      }
+    }
   }
 
   async function reordenarEtapas(draggedId: string, targetId: string) {
@@ -226,13 +290,41 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
     )
   }
 
-  async function excluirLead(leadId: string) {
-    if (!window.confirm('Tem certeza que deseja excluir este orçamento? Esta ação não pode ser desfeita.')) return
+  function excluirLead(leadId: string) {
+    const lead = leads.find(l => l.id === leadId)
+    if (lead) {
+      setModalExcluir(lead)
+      setLeadMenuOpen(null)
+    }
+  }
+
+  async function confirmarExclusao() {
+    if (!modalExcluir) return;
+    const leadId = modalExcluir.id;
+    
+    // Guarda o lead original para rollback em caso de falha
+    const leadRemovido = leads.find(l => l.id === leadId);
     
     // Optimistic update
     setLeads(prev => prev.filter(l => l.id !== leadId))
+    setModalExcluir(null)
     
-    await supabase.from('leads_propostas').delete().eq('id', leadId)
+    const { error } = await supabase.from('leads_propostas').delete().eq('id', leadId)
+    
+    if (error) {
+      console.error('Erro ao excluir orçamento:', error);
+      
+      // Rollback
+      if (leadRemovido) {
+        setLeads(prev => [...prev, leadRemovido]);
+      }
+      
+      if (error.code === '23503') {
+        alert('Não é possível excluir este orçamento porque ele já possui contratos, transações financeiras ou sessões na agenda vinculados. Remova os vínculos primeiro ou marque o orçamento como Perdido.');
+      } else {
+        alert('Ocorreu um erro ao tentar excluir o orçamento: ' + error.message);
+      }
+    }
   }
 
   function marcarGanhou(lead: Lead) {
@@ -327,7 +419,25 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
     <>
       {/* Topbar */}
       <div className="topbar">
-        <span className="topbar-title">CRM — Leads</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <span className="topbar-title">Jornadas</span>
+          <div style={{ display: 'flex', background: 'var(--color-bg-base)', padding: '3px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
+            <button
+              onClick={() => setJornadaAtiva('lead')}
+              className={`btn btn-sm ${jornadaAtiva === 'lead' ? 'btn-primary' : 'btn-ghost'}`}
+              style={{ margin: 0, padding: '5px 12px', fontSize: '0.8125rem' }}
+            >
+              Jornada do Lead
+            </button>
+            <button
+              onClick={() => setJornadaAtiva('cliente')}
+              className={`btn btn-sm ${jornadaAtiva === 'cliente' ? 'btn-primary' : 'btn-ghost'}`}
+              style={{ margin: 0, padding: '5px 12px', fontSize: '0.8125rem' }}
+            >
+              Jornada do Cliente
+            </button>
+          </div>
+        </div>
         <div className="topbar-actions">
           <div style={{ display: 'flex', gap: '4px', background: 'var(--color-bg-base)', padding: '3px', borderRadius: 'var(--radius-md)' }}>
             {(['kanban', 'lista'] as const).map(v => (
@@ -343,6 +453,15 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
       </div>
 
       <div className="page-content animate-fade-in">
+        {jornadaAtiva === 'cliente' ? (
+          <JornadaClienteKanban 
+            fotografoId={fotografoId}
+            etapasProducaoIniciais={etapasProducaoIniciais}
+            sessoesIniciais={sessoesIniciais}
+            tiposSessao={tiposSessao}
+          />
+        ) : (
+          <>
         {/* Métricas */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '14px', marginBottom: '24px' }}>
           {[
@@ -413,23 +532,44 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
                     : false
 
                   if (!ehEtapaOrigem) {
-                    const pacoteIdDoLead = resolveLeadPacoteId(leadArrastado, tiposSessao)
+                    const servicosIdsDoLead = resolveLeadServicosIds(leadArrastado, tiposSessao)
 
-                    const etapaDestinoNoFunil = etapas.find(e =>
-                      targetIds.includes(e.id) && (e.pacote_id ?? null) === pacoteIdDoLead
+                    let etapaDestinoNoFunil = etapas.find(e =>
+                      targetIds.includes(e.id) && e.pacote_id && servicosIdsDoLead.includes(e.pacote_id)
                     )
+                    if (!etapaDestinoNoFunil) {
+                      etapaDestinoNoFunil = etapas.find(e => targetIds.includes(e.id) && !e.pacote_id)
+                    }
+                    if (!etapaDestinoNoFunil) {
+                      etapaDestinoNoFunil = etapas.find(e => targetIds.includes(e.id))
+                    }
 
                     if (!etapaDestinoNoFunil) {
                       isAllowed = false
                     } else {
                       const etapaAtual = etapas.find(e => e.id === leadArrastado.etapa_pipeline_id)
-                      const etapaOrigemNoFunil = etapas.find(e =>
-                        (e.pacote_id ?? null) === pacoteIdDoLead &&
+                      // Busca a etapa de origem no funil específico do lead com fallback (Bug 2 fix)
+                      let etapaOrigemNoFunil = etapas.find(e =>
+                        e.pacote_id && servicosIdsDoLead.includes(e.pacote_id) &&
                         e.nome_etapa.trim().toLowerCase() === (etapaAtual?.nome_etapa ?? '').trim().toLowerCase()
                       )
-                      const regras = etapaOrigemNoFunil?.transicoes_permitidas ?? etapaAtual?.transicoes_permitidas
+                      if (!etapaOrigemNoFunil) {
+                        etapaOrigemNoFunil = etapas.find(e =>
+                          !e.pacote_id &&
+                          e.nome_etapa.trim().toLowerCase() === (etapaAtual?.nome_etapa ?? '').trim().toLowerCase()
+                        )
+                      }
+                      if (!etapaOrigemNoFunil) {
+                        etapaOrigemNoFunil = etapaAtual
+                      }
+                      let regras = etapaOrigemNoFunil?.transicoes_permitidas
+                      if (etapaOrigemNoFunil && etapaOrigemNoFunil.pacote_id && !servicosIdsDoLead.includes(etapaOrigemNoFunil.pacote_id)) {
+                        // Idem fallback extremo
+                        regras = null
+                      }
                       if (regras && regras.length > 0) {
-                        isAllowed = regras.includes(etapaDestinoNoFunil.ordem)
+                        // Bug 1 fix: compara com UUID da etapa destino, não com .ordem
+                        isAllowed = regras.includes(etapaDestinoNoFunil.id)
                       }
                     }
                   }
@@ -519,6 +659,7 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
                         onExcluir={() => excluirLead(lead.id)}
                         onNovaAcao={() => setModalNovaAcao(lead)}
                         onVerHistorico={() => setModalHistorico(lead)}
+                        onEditar={() => setModalEditar(lead)}
                         menuOpen={leadMenuOpen === lead.id}
                         onMenuToggle={() => setLeadMenuOpen(leadMenuOpen === lead.id ? null : lead.id)}
                         isDragging={draggedLeadId === lead.id}
@@ -551,7 +692,7 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
                 </div>
                 <div style={{ flex: 1, overflowY: 'auto', padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {leadsGanhosAtuais.map(lead => (
-                    <LeadCard key={lead.id} lead={lead} etapas={etapas} onMover={moverParaEtapa} onGanhou={() => setModalGanhou(lead)} onPerdeu={() => setModalPerdeu(lead)} onExcluir={() => excluirLead(lead.id)} onNovaAcao={() => {}} onVerHistorico={() => setModalHistorico(lead)} menuOpen={leadMenuOpen === lead.id} onMenuToggle={() => setLeadMenuOpen(leadMenuOpen === lead.id ? null : lead.id)} getServiceLabel={getServiceLabel} />
+                    <LeadCard key={lead.id} lead={lead} etapas={etapas} onMover={moverParaEtapa} onGanhou={() => setModalGanhou(lead)} onPerdeu={() => setModalPerdeu(lead)} onExcluir={() => excluirLead(lead.id)} onNovaAcao={() => {}} onVerHistorico={() => setModalHistorico(lead)} onEditar={() => setModalEditar(lead)} menuOpen={leadMenuOpen === lead.id} onMenuToggle={() => setLeadMenuOpen(leadMenuOpen === lead.id ? null : lead.id)} getServiceLabel={getServiceLabel} />
                   ))}
                 </div>
               </div>
@@ -638,15 +779,29 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
             </table>
           </div>
         )}
-      </div>
+      </>
+    )}
+  </div>
 
-      {/* Modals */}
+      {/* Modais */}
       {showModal && (
         <ModalNovoLead
           fotografoId={fotografoId}
           etapas={etapas}
           onLeadCriado={handleLeadCriado}
           onClose={() => setShowModal(false)}
+          tiposSessao={tiposSessao}
+        />
+      )}
+      {modalEditar && (
+        <ModalEditarLead
+          fotografoId={fotografoId}
+          etapas={etapas}
+          lead={modalEditar}
+          onLeadEditado={(l) => {
+            setLeads(prev => prev.map(old => old.id === l.id ? { ...old, ...l } : old))
+          }}
+          onClose={() => setModalEditar(null)}
           tiposSessao={tiposSessao}
         />
       )}
@@ -664,6 +819,20 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
           onConfirmado={handleLeadAprovado}
           onClose={() => setModalGanhou(null)}
         />
+      )}
+      {modalExcluir && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1050, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div className="animate-fade-in" style={{ background: 'var(--color-bg-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-xl)', width: '100%', maxWidth: '400px', padding: '24px', boxShadow: 'var(--shadow-xl)' }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: '1.25rem', color: 'var(--color-danger)' }}>Excluir Orçamento</h3>
+            <p style={{ margin: '0 0 24px', fontSize: '0.9375rem', color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+              Tem certeza que deseja excluir o orçamento de <strong>{modalExcluir.nome_cliente}</strong>? Esta ação não pode ser desfeita.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+              <button onClick={() => setModalExcluir(null)} className="btn btn-ghost">Cancelar</button>
+              <button onClick={confirmarExclusao} className="btn" style={{ background: 'var(--color-danger)', color: 'white', border: 'none' }}>Sim, Excluir</button>
+            </div>
+          </div>
+        </div>
       )}
       {modalNovaAcao && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 1050, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
@@ -734,7 +903,7 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
 // Sub-componente: Card do Lead no Kanban
 // ============================================================
 function LeadCard({
-  lead, etapas, onMover, onGanhou, onPerdeu, onExcluir, onNovaAcao, onVerHistorico, menuOpen, onMenuToggle, isDragging, onDragStart, onDragEnd, getServiceLabel
+  lead, etapas, onMover, onGanhou, onPerdeu, onExcluir, onNovaAcao, onVerHistorico, onEditar, menuOpen, onMenuToggle, isDragging, onDragStart, onDragEnd, getServiceLabel
 }: {
   lead: Lead
   etapas: Etapa[]
@@ -744,6 +913,7 @@ function LeadCard({
   onExcluir: () => void
   onNovaAcao: () => void
   onVerHistorico: () => void
+  onEditar: () => void
   menuOpen: boolean
   onMenuToggle: () => void
   isDragging?: boolean
@@ -836,7 +1006,7 @@ function LeadCard({
             gap: '4px'
         }}>
           <button 
-            onClick={onGanhou} 
+            onClick={(e) => { e.stopPropagation(); onGanhou(); }} 
             className="btn btn-ghost" 
             style={{ justifyContent: 'flex-start', color: 'var(--color-text-primary)', fontSize: '0.8125rem', padding: '6px 10px', fontWeight: 500, borderRadius: 'var(--radius-sm)' }}
           >
@@ -846,7 +1016,17 @@ function LeadCard({
             Marcar como Ganho
           </button>
           <button 
-            onClick={onPerdeu} 
+            onClick={(e) => { e.stopPropagation(); onEditar(); }} 
+            className="btn btn-ghost" 
+            style={{ justifyContent: 'flex-start', color: 'var(--color-text-primary)', fontSize: '0.8125rem', padding: '6px 10px', fontWeight: 500, borderRadius: 'var(--radius-sm)' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '24px', height: '24px', borderRadius: '6px', background: 'var(--color-bg-hover)', color: 'var(--color-text-muted)', marginRight: '10px' }}>
+              <Edit2 size={14} />
+            </div>
+            Editar Orçamento
+          </button>
+          <button 
+            onClick={(e) => { e.stopPropagation(); onPerdeu(); }} 
             className="btn btn-ghost" 
             style={{ justifyContent: 'flex-start', color: 'var(--color-text-primary)', fontSize: '0.8125rem', padding: '6px 10px', fontWeight: 500, borderRadius: 'var(--radius-sm)' }}
           >
@@ -856,7 +1036,7 @@ function LeadCard({
             Marcar como Perdido
           </button>
           <button 
-            onClick={onExcluir} 
+            onClick={(e) => { e.stopPropagation(); onExcluir(); }} 
             className="btn btn-ghost" 
             style={{ justifyContent: 'flex-start', color: 'var(--color-text-primary)', fontSize: '0.8125rem', padding: '6px 10px', fontWeight: 500, borderRadius: 'var(--radius-sm)' }}
           >

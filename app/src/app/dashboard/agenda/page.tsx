@@ -40,13 +40,6 @@ export default async function AgendaPage() {
     .in('status', ['aprovado', 'confirmado'])
     .order('nome_cliente')
 
-  // Etapas de produção
-  const { data: etapasProducao } = await supabase
-    .from('etapas_pipeline')
-    .select('*')
-    .eq('fotografo_id', perfil.id)
-    .eq('tipo_pipeline', 'producao')
-    .order('ordem')
 
   // Carrega os tipos de sessão customizados do fotógrafo
   const { data: tiposSessao } = await supabase
@@ -61,7 +54,6 @@ export default async function AgendaPage() {
       fusoHorario={perfil.fuso_horario ?? 'America/Sao_Paulo'}
       sessoesIniciais={(sessoes ?? []) as any[]}
       leadsDisponiveis={leads ?? []}
-      etapasProducaoIniciais={etapasProducao ?? []}
       tiposSessao={tiposSessao ?? []}
     />
   )

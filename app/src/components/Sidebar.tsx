@@ -26,7 +26,7 @@ import {
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, section: 'principal' },
   { href: '/dashboard/clientes', label: 'Clientes', icon: UserCheck, section: 'principal' },
-  { href: '/dashboard/leads', label: 'CRM / Leads', icon: Users, section: 'principal' },
+  { href: '/dashboard/leads', label: 'Jornadas', icon: Users, section: 'principal' },
   { href: '/dashboard/contratos', label: 'Contratos', icon: FileText, section: 'principal' },
   { href: '/dashboard/financeiro', label: 'Financeiro', icon: DollarSign, section: 'principal' },
   { href: '/dashboard/pagamentos', label: 'Links de Pgto.', icon: Wallet, section: 'principal' },

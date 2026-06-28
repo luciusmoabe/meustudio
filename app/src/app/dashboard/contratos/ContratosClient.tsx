@@ -3,11 +3,11 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
-  Plus, FileText, Edit2, Trash2, Eye, EyeOff,
+  Plus, FileText, Trash2, Eye, EyeOff,
   Save, X, Loader2, CheckCircle2, AlertCircle,
-  Copy, Tag, DollarSign, Image, Info,
-  ChevronDown, ChevronUp, Zap,
+  DollarSign, Image as ImageIcon,
 } from 'lucide-react'
+import EditorContratoVisual from './EditorContratoVisual'
 
 // ============================================================
 // TIPOS
@@ -52,30 +52,6 @@ const TIPOS_SESSAO = [
   { value: 'outros', label: '📷 Outros' },
 ]
 
-// Variáveis disponíveis para injeção (RF04)
-const VARIAVEIS = [
-  { tag: '{{nome_cliente}}',    descricao: 'Nome completo do cliente',         exemplo: 'Maria da Silva',          grupo: 'cliente' },
-  { tag: '{{email_cliente}}',   descricao: 'E-mail do cliente',                exemplo: 'maria@email.com',          grupo: 'cliente' },
-  { tag: '{{whatsapp_cliente}}',descricao: 'WhatsApp do cliente',              exemplo: '+55 11 99999-0000',        grupo: 'cliente' },
-  { tag: '{{data_sessao}}',     descricao: 'Data da sessão agendada',          exemplo: '15/08/2026',              grupo: 'sessao' },
-  { tag: '{{local_sessao}}',    descricao: 'Local da sessão',                  exemplo: 'Studio Lumina - SP',      grupo: 'sessao' },
-  { tag: '{{tipo_sessao}}',     descricao: 'Tipo de sessão fotográfica',       exemplo: 'Ensaio Newborn',          grupo: 'sessao' },
-  { tag: '{{valor_total}}',     descricao: 'Valor total do contrato',          exemplo: 'R$ 1.200,00',             grupo: 'financeiro' },
-  { tag: '{{valor_sinal}}',     descricao: 'Valor do sinal (entrada)',         exemplo: 'R$ 360,00',               grupo: 'financeiro' },
-  { tag: '{{limite_fotos}}',    descricao: 'Número máximo de fotos entregues', exemplo: '30',                      grupo: 'financeiro' },
-  { tag: '{{nome_comercial}}',  descricao: 'Nome do estúdio',                  exemplo: 'Studio Lumina',           grupo: 'estudio' },
-  { tag: '{{cnpj_fotografo}}',  descricao: 'CPF/CNPJ do fotógrafo',           exemplo: '12.345.678/0001-90',      grupo: 'estudio' },
-  { tag: '{{pix_estudio}}',     descricao: 'Chave Pix do estúdio',            exemplo: 'financeiro@studio.com',   grupo: 'estudio' },
-  { tag: '{{whatsapp_estudio}}',descricao: 'WhatsApp do estúdio',             exemplo: '+55 11 99000-0000',        grupo: 'estudio' },
-  { tag: '{{data_contrato}}',   descricao: 'Data de geração do contrato',     exemplo: '10/06/2026',              grupo: 'estudio' },
-]
-
-const GRUPOS_LABEL: Record<string, string> = {
-  cliente:    '👤 Cliente',
-  sessao:     '📅 Sessão',
-  financeiro: '💰 Financeiro',
-  estudio:    '🏢 Estúdio',
-}
 
 // Template inicial de contrato para facilitar o começo
 const TEMPLATE_INICIAL = `<h1 style="text-align:center; font-size:18px; margin-bottom:4px;">CONTRATO DE SERVIÇO FOTOGRÁFICO</h1>
@@ -172,8 +148,6 @@ export default function ContratosClient({ fotografoId, perfilDados, modelosInici
   const [deleting, setDeleting] = useState<string | null>(null)
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [statusMsg, setStatusMsg] = useState('')
-  const [showVars, setShowVars] = useState(true)
-  const [varGrupo, setVarGrupo] = useState<string>('todos')
 
   function novoModelo() {
     setEditando({
@@ -193,24 +167,6 @@ export default function ContratosClient({ fotografoId, perfilDados, modelosInici
   function editarModelo(m: Modelo) {
     setEditando({ ...m })
     setPreview(false)
-  }
-
-  function inserirVariavel(tag: string) {
-    if (!editando) return
-    const textarea = document.getElementById('editor-minuta') as HTMLTextAreaElement
-    if (textarea) {
-      const start = textarea.selectionStart
-      const end = textarea.selectionEnd
-      const atual = editando.minuta_html ?? ''
-      const novo = atual.substring(0, start) + tag + atual.substring(end)
-      setEditando(prev => ({ ...prev, minuta_html: novo }))
-      setTimeout(() => {
-        textarea.focus()
-        textarea.setSelectionRange(start + tag.length, start + tag.length)
-      }, 0)
-    } else {
-      setEditando(prev => ({ ...prev, minuta_html: (prev?.minuta_html ?? '') + tag }))
-    }
   }
 
   async function handleSalvar() {
@@ -272,7 +228,6 @@ export default function ContratosClient({ fotografoId, perfilDados, modelosInici
     setModelos(prev => prev.map(m => m.id === modelo.id ? { ...m, ativo: !m.ativo } : m))
   }
 
-  const varsFiltradas = varGrupo === 'todos' ? VARIAVEIS : VARIAVEIS.filter(v => v.grupo === varGrupo)
   const tipoLabel = (v: string) => {
     const found = tiposSessao?.find(t => t.id === v || t.nome.toLowerCase() === v.toLowerCase())
     if (found) return found.nome
@@ -434,7 +389,7 @@ export default function ContratosClient({ fotografoId, perfilDados, modelosInici
                     <span className="form-hint">Percentual de entrada exigido no checkout</span>
                   </div>
                   <div className="form-group">
-                    <label className="form-label"><Image size={12} style={{ display: 'inline', marginRight: '4px' }} />Limite de Fotos</label>
+                    <label className="form-label"><span aria-hidden="true"><ImageIcon size={12} style={{ display: 'inline', marginRight: '4px' }} /></span>Limite de Fotos</label>
                     <input type="number" className="form-input" placeholder="30" min="1" value={editando.limite_fotos_contrato ?? ''} onChange={e => setEditando(p => ({ ...p, limite_fotos_contrato: e.target.value ? parseInt(e.target.value) : null }))} />
                     <span className="form-hint">Ativa cobrança extra quando excedido (RF18)</span>
                   </div>
@@ -442,46 +397,36 @@ export default function ContratosClient({ fotografoId, perfilDados, modelosInici
               </div>
 
               {/* Editor da minuta */}
-              <div className="card animate-fade-in" style={{ padding: '18px', flex: 1 }}>
-                <div className="card-header" style={{ marginBottom: '12px' }}>
+              <div className="card animate-fade-in" style={{ padding: '0', flex: 1, border: 'none', background: 'transparent' }}>
+                <div className="card-header" style={{ marginBottom: '16px', background: 'var(--color-bg-surface)', padding: '16px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)' }}>
                   <span className="card-title">
                     <span className="card-title-icon"><FileText size={15} /></span>
-                    Minuta do Contrato (HTML)
+                    Corpo do Contrato
                   </span>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <span className="badge badge-accent" style={{ fontSize: '0.7rem' }}>RF03 · RF04</span>
+                    <span className="badge badge-accent" style={{ fontSize: '0.7rem' }}>Editor Visual</span>
                     <button onClick={() => setPreview(!preview)} className={`btn btn-sm ${preview ? 'btn-secondary' : 'btn-ghost'}`}>
-                      {preview ? <><EyeOff size={13} /> Código</> : <><Eye size={13} /> Preview</>}
+                      {preview ? <><EyeOff size={13} /> Editar</> : <><Eye size={13} /> Preview Visual</>}
                     </button>
                   </div>
                 </div>
 
                 {!preview ? (
-                  <textarea
-                    id="editor-minuta"
-                    className="form-textarea"
+                  <EditorContratoVisual
                     value={editando.minuta_html ?? ''}
-                    onChange={e => setEditando(p => ({ ...p, minuta_html: e.target.value }))}
-                    style={{ minHeight: '380px', fontFamily: 'monospace', fontSize: '0.8125rem', lineHeight: 1.6 }}
-                    placeholder="Cole ou escreva o HTML do seu contrato aqui..."
+                    onChange={val => setEditando(p => ({ ...p, minuta_html: val }))}
                   />
                 ) : (
                   <div style={{
                     background: '#fff', borderRadius: 'var(--radius-md)',
                     border: '1px solid var(--color-border)',
                     padding: '40px', color: '#1a1a1a',
-                    minHeight: '380px', fontFamily: 'Georgia, serif',
+                    minHeight: '800px', fontFamily: 'Georgia, serif',
                     fontSize: '14px', lineHeight: 1.7,
+                    maxWidth: '800px', margin: '0 auto', boxShadow: '0 4px 20px rgba(0,0,0,0.08)'
                   }}
                     dangerouslySetInnerHTML={{ __html: aplicarVariaveis(editando.minuta_html ?? '', perfilDados) }}
                   />
-                )}
-
-                {!preview && (
-                  <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    <Info size={12} />
-                    Suporta HTML. Clique nas variáveis ao lado para inserir no cursor.
-                  </p>
                 )}
               </div>
 
@@ -498,86 +443,6 @@ export default function ContratosClient({ fotografoId, perfilDados, modelosInici
                   style={{ minHeight: '100px' }}
                 />
               </div>
-            </div>
-
-            {/* ===== PAINEL DE VARIÁVEIS ===== */}
-            <div style={{
-              width: '280px', borderLeft: '1px solid var(--color-border)',
-              background: 'var(--color-bg-surface)',
-              display: 'flex', flexDirection: 'column',
-              flexShrink: 0,
-            }}>
-              <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Zap size={15} color="var(--color-accent)" />
-                  <span style={{ fontSize: '0.8125rem', fontWeight: 600 }}>Variáveis dinâmicas</span>
-                </div>
-                <button onClick={() => setShowVars(!showVars)} className="btn btn-ghost btn-icon" style={{ padding: '3px' }}>
-                  {showVars ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-                </button>
-              </div>
-
-              {showVars && (
-                <>
-                  {/* Filtro por grupo */}
-                  <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--color-border-subtle)', display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                    {['todos', ...Object.keys(GRUPOS_LABEL)].map(g => (
-                      <button key={g} onClick={() => setVarGrupo(g)} className="btn" style={{
-                        padding: '3px 10px', fontSize: '0.7rem', borderRadius: 'var(--radius-full)',
-                        background: varGrupo === g ? 'var(--color-accent-subtle)' : 'var(--color-bg-elevated)',
-                        color: varGrupo === g ? 'var(--color-accent)' : 'var(--color-text-muted)',
-                        border: `1px solid ${varGrupo === g ? 'var(--color-accent)' : 'var(--color-border)'}`,
-                      }}>
-                        {g === 'todos' ? 'Todos' : GRUPOS_LABEL[g]}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div style={{ overflowY: 'auto', flex: 1, padding: '8px' }}>
-                    {varsFiltradas.map(v => (
-                      <button
-                        key={v.tag}
-                        onClick={() => inserirVariavel(v.tag)}
-                        title={`Inserir ${v.tag} — ${v.descricao}`}
-                        style={{
-                          width: '100%', textAlign: 'left',
-                          padding: '8px 10px',
-                          borderRadius: 'var(--radius-md)',
-                          border: '1px solid transparent',
-                          background: 'transparent',
-                          cursor: 'pointer',
-                          transition: 'all var(--transition-fast)',
-                          marginBottom: '2px',
-                        }}
-                        onMouseEnter={e => {
-                          e.currentTarget.style.background = 'var(--color-bg-elevated)'
-                          e.currentTarget.style.borderColor = 'var(--color-border)'
-                        }}
-                        onMouseLeave={e => {
-                          e.currentTarget.style.background = 'transparent'
-                          e.currentTarget.style.borderColor = 'transparent'
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2px' }}>
-                          <code style={{ fontSize: '0.75rem', color: 'var(--color-accent)', fontFamily: 'monospace', fontWeight: 600 }}>
-                            {v.tag}
-                          </code>
-                          <Copy size={11} color="var(--color-text-muted)" />
-                        </div>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>{v.descricao}</div>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', fontStyle: 'italic', marginTop: '2px', opacity: 0.7 }}>ex: {v.exemplo}</div>
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Dica */}
-                  <div style={{ padding: '12px', borderTop: '1px solid var(--color-border-subtle)', background: 'var(--color-accent-subtle)' }}>
-                    <p style={{ fontSize: '0.7rem', color: 'var(--color-accent)', lineHeight: 1.5, margin: 0 }}>
-                      💡 Clique em uma variável para inserir no cursor. No Preview, variáveis são destacadas por cor.
-                    </p>
-                  </div>
-                </>
-              )}
             </div>
           </div>
         )}

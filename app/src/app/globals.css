@@ -72,7 +72,7 @@
 }
 
 /* Tema Claro (Fotógrafo & Cliente) */
-html.light {
+html.light, .client-theme {
   /* Paleta Principal */
   --color-bg-base:        #f5f5f7;
   --color-bg-surface:     #ffffff;

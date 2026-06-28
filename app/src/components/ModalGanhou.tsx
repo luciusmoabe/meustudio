@@ -190,6 +190,21 @@ export default function ModalGanhou({ fotografoId, lead, onConfirmado, onClose }
       await supabase.from('parcelas').insert(parcelas);
     }
 
+    // Gerar sessão de agenda baseada no pacote/serviço contratado
+    if (data) {
+      // Tenta usar data_pretendida ou amanhã como fallback
+      const dataInicio = lead.data_pretendida ? lead.data_pretendida + 'T09:00:00' : new Date(Date.now() + 86400000).toISOString();
+      await supabase.from('sessoes_agenda').insert({
+        fotografo_id: fotografoId,
+        lead_id: data.id,
+        titulo_sessao: `Ensaio: ${lead.nome_cliente}`,
+        descricao: `Sessão gerada automaticamente a partir da proposta aprovada. (Serviço: ${lead.tipo_servico})`,
+        data_hora_inicio: dataInicio,
+        status: 'agendado',
+        limite_fotos: modelo.limite_fotos_contrato
+      });
+    }
+
     setStatus('success')
     setStatusMsg('Lead aprovado com sucesso!')
     setTimeout(() => {

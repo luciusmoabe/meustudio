@@ -60,12 +60,35 @@ export default async function LeadsPage() {
     .eq('fotografo_id', perfil.id)
     .order('nome', { ascending: true })
 
+  // Etapas de produção
+  const { data: etapasProducao } = await supabase
+    .from('etapas_pipeline')
+    .select('*')
+    .eq('fotografo_id', perfil.id)
+    .eq('tipo_pipeline', 'producao')
+    .is('pacote_id', null)
+    .order('ordem')
+
+  // Sessões da agenda para a esteira
+  const { data: sessoes } = await supabase
+    .from('sessoes_agenda')
+    .select(`
+      id, titulo_sessao, tipo_sessao, data_hora_inicio, data_hora_fim,
+      local_sessao, status, limite_fotos, fotos_selecionadas, etapa_producao_id, valor_foto_extra,
+      data_entrada_etapa, criado_em,
+      leads_propostas (id, nome_cliente, whatsapp_cliente)
+    `)
+    .eq('fotografo_id', perfil.id)
+    .order('data_hora_inicio')
+
   return (
     <LeadsClient
       fotografoId={perfil.id}
       etapasIniciais={etapas ?? []}
       leadsIniciais={leads ?? []}
       tiposSessao={tiposSessao ?? []}
+      etapasProducaoIniciais={etapasProducao ?? []}
+      sessoesIniciais={(sessoes ?? []) as any[]}
     />
   )
 }

@@ -2,7 +2,8 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { Users, Search, ChevronRight, Phone, Mail, Briefcase } from 'lucide-react'
+import { Users, Search, Phone, Mail, Briefcase, User as UserIcon } from 'lucide-react'
+import EditClienteModal from './EditClienteModal'
 
 type Cliente = {
   id: string
@@ -11,6 +12,10 @@ type Cliente = {
   whatsapp: string | null
   instagram: string | null
   cidade: string | null
+  cpf?: string | null
+  rg?: string | null
+  data_nascimento?: string | null
+  endereco?: string | null
   leads_propostas: { id: string }[]
 }
 
@@ -77,7 +82,7 @@ export default function ClientesClient({ clientes }: Props) {
                 <th style={{ padding: '12px 20px', fontWeight: 600 }}>Cliente</th>
                 <th style={{ padding: '12px 20px', fontWeight: 600 }}>Contato</th>
                 <th style={{ padding: '12px 20px', fontWeight: 600 }}>Projetos</th>
-                <th style={{ padding: '12px 20px', fontWeight: 600, textAlign: 'right' }}>Ação</th>
+                <th style={{ padding: '12px 20px', fontWeight: 600, textAlign: 'right' }}>Ações</th>
               </tr>
             </thead>
             <tbody>
@@ -128,9 +133,12 @@ export default function ClientesClient({ clientes }: Props) {
                     </span>
                   </td>
                   <td style={{ padding: '16px 20px', textAlign: 'right' }}>
-                    <Link href={`/dashboard/clientes/${cliente.id}`} className="btn btn-ghost btn-sm">
-                      Ver Histórico <ChevronRight size={14} />
-                    </Link>
+                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                      <Link href={`/dashboard/clientes/${cliente.id}`} className="btn btn-ghost btn-sm" title="Abrir Perfil do Cliente">
+                        <UserIcon size={16} /> Perfil
+                      </Link>
+                      <EditClienteModal cliente={cliente} />
+                    </div>
                   </td>
                 </tr>
               ))}

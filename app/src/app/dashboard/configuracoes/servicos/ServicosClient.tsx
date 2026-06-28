@@ -12,7 +12,7 @@ import Link from 'next/link'
 type Cost = { id?: string; nome_custo: string; valor: number; categoria: string }
 type PackageItem = { id?: string; servico_id: string; quantidade: number }
 type FormField = { id?: string; pergunta: string; tipo_resposta: string; obrigatorio: boolean; ordem: number }
-type Etapa = { id?: string; nome_etapa: string; ordem: number; cor_hex: string; tipo_pipeline: string; pacote_id?: string | null; meta_acoes?: number; transicoes_permitidas?: number[] | null }
+type Etapa = { id?: string; nome_etapa: string; ordem: number; cor_hex: string; tipo_pipeline: string; pacote_id?: string | null; meta_acoes?: number; transicoes_permitidas?: string[] | null }
 
 type Service = {
   id: string
@@ -24,6 +24,7 @@ type Service = {
   cor_hex: string
   descricao: string | null
   is_pacote: boolean
+  is_ensaio?: boolean
   custos_servico?: Cost[]
   pacote_servicos?: PackageItem[]
   servico_formularios?: FormField[]
@@ -72,6 +73,7 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
 
   // Form State
   const [formIsPacote, setFormIsPacote] = useState(false)
+  const [formIsEnsaio, setFormIsEnsaio] = useState(false)
   const [formName, setFormName] = useState('')
   const [formDuration, setFormDuration] = useState(60)
   const [formPrice, setFormPrice] = useState(0)
@@ -108,6 +110,7 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
     if (service) {
       setEditingService(service)
       setFormIsPacote(service.is_pacote)
+      setFormIsEnsaio(service.is_ensaio ?? false)
       setFormName(service.nome)
       setFormDuration(service.duracao_minutos)
       setFormPrice(service.valor_sugerido)
@@ -130,6 +133,7 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
     } else {
       setEditingService(null)
       setFormIsPacote(forcePacote || mainTab === 'pacotes')
+      setFormIsEnsaio(false)
       setFormName('')
       setFormDuration(60)
       setFormPrice(0)
@@ -164,6 +168,7 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
     const etapasAtuais = formEtapas.filter(e => e.tipo_pipeline === tipoPipelineAtivo)
     const novaOrdem = etapasAtuais.length > 0 ? Math.max(...etapasAtuais.map(e => e.ordem)) + 1 : 1
     const novaEtapa: Etapa = { nome_etapa: '', ordem: novaOrdem, cor_hex: '#60a5fa', tipo_pipeline: tipoPipelineAtivo, meta_acoes: 0, transicoes_permitidas: null }
+    // Nota: novas etapas sem id usam chave temporária gerada em getEtapaKey()
     setFormEtapas(prev => [...prev, novaEtapa])
   }
   function updateEtapa(index: number, field: keyof Etapa, value: any) {
@@ -197,7 +202,7 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
     const servicePayload = {
       fotografo_id: fotografoId, nome: formName, duracao_minutos: formDuration, valor_sugerido: formPrice,
       valor_foto_extra: formExtraPhotoPrice, limite_fotos_def: formPhotos, cor_hex: formColor,
-      descricao: formDescription || null, is_pacote: formIsPacote
+      descricao: formDescription || null, is_pacote: formIsPacote, is_ensaio: formIsEnsaio
     }
 
     try {
@@ -260,16 +265,50 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
 
       let newEtapas = [...etapas.filter(e => e.pacote_id !== savedService.id)]
       if (!formIsPacote && usarFunilExclusivo && formEtapas.length > 0) {
-        const etapasPayload = formEtapas.filter(e => e.nome_etapa.trim()).map((e, idx) => ({
+        // Primeiro: salva as etapas SEM transicoes_permitidas para obter UUIDs reais
+        const etapasValidas = formEtapas.filter(e => e.nome_etapa.trim())
+        const etapasPayload = etapasValidas.map((e, idx) => ({
           ...(e.id ? { id: e.id } : {}),
           fotografo_id: fotografoId, pacote_id: savedService.id, nome_etapa: e.nome_etapa, 
           ordem: idx + 1, cor_hex: e.cor_hex, tipo_pipeline: e.tipo_pipeline, meta_acoes: e.meta_acoes || 0,
-          transicoes_permitidas: e.transicoes_permitidas
+          transicoes_permitidas: null  // será atualizado no segundo passo
         }))
         if (etapasPayload.length > 0) {
-          const { data, error: errEtapas } = await supabase.from('etapas_pipeline').upsert(etapasPayload).select()
+          const { data: savedEtapas, error: errEtapas } = await supabase.from('etapas_pipeline').upsert(etapasPayload).select()
           if (errEtapas) throw errEtapas
-          if (data) newEtapas = [...newEtapas, ...data]
+          if (savedEtapas) {
+            // Segundo: mapeia chaves temporárias/IDs do formulário para UUIDs reais
+            const keyToUuid = new Map<string, string>()
+            etapasValidas.forEach((formEtapa, idx) => {
+              const key = formEtapa.id || `temp-${idx}`
+              keyToUuid.set(key, savedEtapas[idx].id)
+            })
+
+            // Terceiro: converte transicoes_permitidas de chaves temporárias para UUIDs reais
+            const updatesComRegras = etapasValidas.map((formEtapa, idx) => {
+              let regrasConvertidas: string[] | null = null
+              if (formEtapa.transicoes_permitidas && formEtapa.transicoes_permitidas.length > 0) {
+                regrasConvertidas = formEtapa.transicoes_permitidas
+                  .map(key => keyToUuid.get(String(key)))
+                  .filter((uuid): uuid is string => !!uuid)
+                if (regrasConvertidas.length === 0) regrasConvertidas = null
+              }
+              return { id: savedEtapas[idx].id, transicoes_permitidas: regrasConvertidas }
+            }).filter(u => u.transicoes_permitidas !== null)
+
+            if (updatesComRegras.length > 0) {
+              await Promise.all(updatesComRegras.map(u =>
+                supabase.from('etapas_pipeline').update({ transicoes_permitidas: u.transicoes_permitidas }).eq('id', u.id)
+              ))
+              // Atualiza os dados locais com as regras convertidas
+              updatesComRegras.forEach(u => {
+                const se = savedEtapas.find(e => e.id === u.id)
+                if (se) (se as any).transicoes_permitidas = u.transicoes_permitidas
+              })
+            }
+
+            newEtapas = [...newEtapas, ...savedEtapas]
+          }
         }
       }
       setEtapas(newEtapas)
@@ -490,8 +529,10 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
                   <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '16px' }}>
                       <div className="form-group" style={{ margin: 0 }}><label className="form-label">Nome do {formIsPacote ? 'Pacote' : 'Serviço'} *</label><input type="text" className="form-input" required placeholder={formIsPacote ? "Ex: Combo Maternidade" : "Ex: Ensaio Gestante"} value={formName} onChange={e => setFormName(e.target.value)} /></div>
-                      {formIsPacote && (
+                      {formIsPacote ? (
                          <div className="form-group" style={{ margin: 0 }}><label className="form-label">Preço Sugerido (R$)</label><input type="number" className="form-input" min="0" step="0.01" value={formPrice || ''} onChange={e => setFormPrice(e.target.value ? parseFloat(e.target.value) : 0)} /></div>
+                      ) : (
+                         <div className="form-group" style={{ margin: 0 }}><label className="form-label" style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '28px', cursor: 'pointer' }}><input type="checkbox" checked={formIsEnsaio} onChange={e => setFormIsEnsaio(e.target.checked)} /> É uma sessão de Ensaio?</label></div>
                       )}
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
@@ -518,9 +559,18 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                         {availableSimpleServices.map(s => {
                           const isSelected = formPackageItems.some(p => p.servico_id === s.id)
+                          const temEnsaioSelecionado = formPackageItems.some(p => availableSimpleServices.find(xs => xs.id === p.servico_id)?.is_ensaio)
+                          const isDisabled = !isSelected && s.is_ensaio && temEnsaioSelecionado
+
                           return (
-                            <div key={s.id} onClick={() => isSelected ? removePackageItem(s.id) : addPackageItem(s.id)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderRadius: 'var(--radius-md)', border: `1px solid ${isSelected ? 'var(--color-accent)' : 'var(--color-border)'}`, background: isSelected ? 'var(--color-accent-subtle)' : 'var(--color-bg-surface)', cursor: 'pointer' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}><div style={{ width: '20px', height: '20px', borderRadius: '4px', border: `2px solid ${isSelected ? 'var(--color-accent)' : 'var(--color-border-subtle)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', background: isSelected ? 'var(--color-accent)' : 'transparent' }}>{isSelected && <Check size={14} color="#fff" />}</div><span style={{ fontWeight: 500, color: isSelected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}>{s.nome}</span></div>
+                            <div key={s.id} onClick={() => { if (!isDisabled) isSelected ? removePackageItem(s.id) : addPackageItem(s.id) }} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderRadius: 'var(--radius-md)', border: `1px solid ${isSelected ? 'var(--color-accent)' : 'var(--color-border)'}`, background: isSelected ? 'var(--color-accent-subtle)' : 'var(--color-bg-surface)', cursor: isDisabled ? 'not-allowed' : 'pointer', opacity: isDisabled ? 0.5 : 1 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <div style={{ width: '20px', height: '20px', borderRadius: '4px', border: `2px solid ${isSelected ? 'var(--color-accent)' : 'var(--color-border-subtle)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', background: isSelected ? 'var(--color-accent)' : 'transparent' }}>{isSelected && <Check size={14} color="#fff" />}</div>
+                                <span style={{ fontWeight: 500, color: isSelected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}>
+                                  {s.nome} {s.is_ensaio && <span style={{ fontSize: '0.65rem', marginLeft: '6px', background: 'var(--color-bg-elevated)', padding: '2px 6px', borderRadius: '4px' }}>📸 Ensaio</span>}
+                                </span>
+                              </div>
+                              {isDisabled && <span style={{ fontSize: '0.7rem', color: 'var(--color-danger)' }}>Limite atingido</span>}
                             </div>
                           )
                         })}
@@ -605,13 +655,15 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
                                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                                   {formEtapas.filter(e => e.tipo_pipeline === tipoPipelineAtivo).map((outra, oIdx) => {
                                     if (oIdx === idx) return null;
-                                    const checked = etapa.transicoes_permitidas?.includes(oIdx + 1) || false;
+                                    // Usa o ID real se existir, ou uma chave temporária estável por índice
+                                    const outraKey = outra.id || `temp-${oIdx}`;
+                                    const checked = etapa.transicoes_permitidas?.includes(outraKey) || false;
                                     return (
                                       <label key={oIdx} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.8125rem', cursor: 'pointer' }}>
                                         <input type="checkbox" checked={checked} onChange={e => {
                                           let atual = etapa.transicoes_permitidas || [];
-                                          if (e.target.checked) atual = [...atual, oIdx + 1];
-                                          else atual = atual.filter(a => a !== oIdx + 1);
+                                          if (e.target.checked) atual = [...atual, outraKey];
+                                          else atual = atual.filter(a => a !== outraKey);
                                           updateEtapa(idx, 'transicoes_permitidas', atual.length > 0 ? atual : null);
                                         }} />
                                         {outra.nome_etapa || `Etapa ${oIdx + 1}`}
