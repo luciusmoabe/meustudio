@@ -36,6 +36,8 @@ type Sessao = {
   fotos_selecionadas: number | null
   leads_propostas: { id: string; nome_cliente: string; whatsapp_cliente: string | null } | null
   etapa_producao_id: string | null
+  data_entrada_etapa?: string
+  criado_em?: string
 }
 
 type Etapa = {
@@ -99,6 +101,7 @@ export default function AgendaClient({ fotografoId, sessoesIniciais, leadsDispon
   const [view, setView] = useState<'calendario' | 'kanban'>('calendario')
   const [draggedSessaoId, setDraggedSessaoId] = useState<string | null>(null)
   const [dragOverEtapaId, setDragOverEtapaId] = useState<string | null>(null)
+  const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null)
   
   // Calendário State
   const [currentDate, setCurrentDate] = useState(new Date())
@@ -173,8 +176,40 @@ export default function AgendaClient({ fotografoId, sessoesIniciais, leadsDispon
     const etapa = etapas.find(e => e.id === etapaId)
     const novoStatus = (etapa && ETAPA_STATUS_MAP[etapa.nome_etapa]) ? ETAPA_STATUS_MAP[etapa.nome_etapa] : 'em_producao'
     await supabase.from('sessoes_agenda').update({ etapa_producao_id: etapaId, status: novoStatus }).eq('id', sessaoId)
-    setSessoes(prev => prev.map(s => s.id === sessaoId ? { ...s, etapa_producao_id: etapaId, status: novoStatus } : s))
+    setSessoes(prev => prev.map(s => s.id === sessaoId ? { 
+      ...s, 
+      etapa_producao_id: etapaId, 
+      status: novoStatus,
+      data_entrada_etapa: new Date().toISOString()
+    } : s))
+    
+    setDraggedSessaoId(null)
+    setDragOverEtapaId(null)
     setMenuSessao(null)
+  }
+
+  async function reordenarEtapas(draggedId: string, targetId: string) {
+    if (draggedId === targetId) return
+    
+    const newEtapas = [...etapas]
+    const draggedIndex = newEtapas.findIndex(e => e.id === draggedId)
+    const targetIndex = newEtapas.findIndex(e => e.id === targetId)
+    
+    if (draggedIndex === -1 || targetIndex === -1) return
+    
+    const [draggedItem] = newEtapas.splice(draggedIndex, 1)
+    newEtapas.splice(targetIndex, 0, draggedItem)
+    
+    const updatedEtapas = newEtapas.map((e, index) => ({
+      ...e,
+      ordem: index + 1
+    }))
+    
+    setEtapas(updatedEtapas)
+    
+    for (const e of updatedEtapas) {
+      await supabase.from('etapas_pipeline').update({ ordem: e.ordem }).eq('id', e.id)
+    }
   }
 
   async function marcarStatus(sessaoId: string, status: string) {
@@ -354,14 +389,34 @@ export default function AgendaClient({ fotografoId, sessoesIniciais, leadsDispon
                   const sessoesEtapa = sessoes.filter(s => s.etapa_producao_id === etapa.id && !['cancelada', 'entregue'].includes(s.status))
                   return (
                     <div key={etapa.id} 
-                      onDragOver={(e) => { e.preventDefault(); setDragOverEtapaId(etapa.id) }}
+                      draggable={true}
+                      onDragStart={(e) => {
+                        e.stopPropagation();
+                        e.dataTransfer.setData('colId', etapa.id);
+                        e.dataTransfer.effectAllowed = 'move';
+                        setTimeout(() => setDraggedColumnId(etapa.id), 0);
+                      }}
+                      onDragEnd={() => setDraggedColumnId(null)}
+                      onDragOver={(e) => { 
+                        e.preventDefault(); 
+                        if (!draggedColumnId && !draggedSessaoId) return;
+                        setDragOverEtapaId(etapa.id) 
+                      }}
                       onDragLeave={() => setDragOverEtapaId(null)}
                       onDrop={(e) => {
                         e.preventDefault();
                         setDragOverEtapaId(null);
+                        
+                        const colId = e.dataTransfer.getData('colId');
+                        if (colId) {
+                          reordenarEtapas(colId, etapa.id);
+                          return;
+                        }
+                        
                         const sessaoId = e.dataTransfer.getData('sessaoId');
                         if (sessaoId) moverParaEtapa(sessaoId, etapa.id);
                       }}
+                      data-type="column"
                       style={{
                       minWidth: '280px', width: '280px',
                       background: dragOverEtapaId === etapa.id ? 'var(--color-bg-elevated)' : 'var(--color-bg-surface)',
@@ -370,6 +425,7 @@ export default function AgendaClient({ fotografoId, sessoesIniciais, leadsDispon
                       display: 'flex', flexDirection: 'column',
                       maxHeight: 'calc(100vh - 180px)',
                       transition: 'all 0.2s ease',
+                      opacity: draggedColumnId === etapa.id ? 0.5 : 1,
                     }}>
                       <div style={{
                         padding: '12px 14px', borderBottom: '1px solid var(--color-border-subtle)',
@@ -394,6 +450,7 @@ export default function AgendaClient({ fotografoId, sessoesIniciais, leadsDispon
                           <div key={sessao.id} 
                             draggable={true}
                             onDragStart={(e) => {
+                              e.stopPropagation();
                               e.dataTransfer.setData('sessaoId', sessao.id)
                               e.dataTransfer.effectAllowed = 'move'
                               setTimeout(() => setDraggedSessaoId(sessao.id), 0)
@@ -434,6 +491,16 @@ export default function AgendaClient({ fotografoId, sessoesIniciais, leadsDispon
                                 )}
                               </div>
                             </div>
+                            
+                            {(() => {
+                              const dataRef = sessao.data_entrada_etapa || sessao.criado_em || sessao.data_hora_inicio;
+                              const diasNaEtapa = Math.floor((Date.now() - new Date(dataRef).getTime()) / (1000 * 60 * 60 * 24));
+                              return (
+                                <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', textAlign: 'right', marginBottom: '6px' }}>
+                                  ⏳ {diasNaEtapa} {diasNaEtapa === 1 ? 'dia' : 'dias'} na etapa
+                                </div>
+                              );
+                            })()}
 
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>

@@ -12,7 +12,7 @@ import Link from 'next/link'
 type Cost = { id?: string; nome_custo: string; valor: number; categoria: string }
 type PackageItem = { id?: string; servico_id: string; quantidade: number }
 type FormField = { id?: string; pergunta: string; tipo_resposta: string; obrigatorio: boolean; ordem: number }
-type Etapa = { id?: string; nome_etapa: string; ordem: number; cor_hex: string; tipo_pipeline: string; pacote_id?: string | null }
+type Etapa = { id?: string; nome_etapa: string; ordem: number; cor_hex: string; tipo_pipeline: string; pacote_id?: string | null; meta_acoes?: number; transicoes_permitidas?: number[] | null }
 
 type Service = {
   id: string
@@ -89,6 +89,7 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
   const [usarFunilExclusivo, setUsarFunilExclusivo] = useState(false)
   const [formEtapas, setFormEtapas] = useState<Etapa[]>([])
   const [tipoPipelineAtivo, setTipoPipelineAtivo] = useState<'vendas' | 'producao'>('vendas')
+  const [expandedRegrasIdx, setExpandedRegrasIdx] = useState<number | null>(null)
 
   // Helper arrays for filtering
   const availableSimpleServices = useMemo(() => servicos.filter(s => !s.is_pacote), [servicos])
@@ -162,7 +163,7 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
   function addEtapa() {
     const etapasAtuais = formEtapas.filter(e => e.tipo_pipeline === tipoPipelineAtivo)
     const novaOrdem = etapasAtuais.length > 0 ? Math.max(...etapasAtuais.map(e => e.ordem)) + 1 : 1
-    const novaEtapa: Etapa = { nome_etapa: '', ordem: novaOrdem, cor_hex: '#60a5fa', tipo_pipeline: tipoPipelineAtivo }
+    const novaEtapa: Etapa = { nome_etapa: '', ordem: novaOrdem, cor_hex: '#60a5fa', tipo_pipeline: tipoPipelineAtivo, meta_acoes: 0, transicoes_permitidas: null }
     setFormEtapas(prev => [...prev, novaEtapa])
   }
   function updateEtapa(index: number, field: keyof Etapa, value: any) {
@@ -216,9 +217,20 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
         await Promise.all([
           supabase.from('custos_servico').delete().eq('tipo_sessao_id', editingService.id),
           supabase.from('pacote_servicos').delete().eq('pacote_id', editingService.id),
-          supabase.from('servico_formularios').delete().eq('tipos_sessao_id', editingService.id),
-          supabase.from('etapas_pipeline').delete().eq('pacote_id', editingService.id)
+          supabase.from('servico_formularios').delete().eq('tipos_sessao_id', editingService.id)
         ])
+        
+        // Tratar as etapas do pipeline com cuidado para não perder os leads vinculados
+        const etapasKept = formEtapas.filter(e => e.id).map(e => e.id)
+        if (!formIsPacote && usarFunilExclusivo && formEtapas.length > 0) {
+          if (etapasKept.length > 0) {
+            await supabase.from('etapas_pipeline').delete().eq('pacote_id', editingService.id).not('id', 'in', `(${etapasKept.join(',')})`)
+          } else {
+            await supabase.from('etapas_pipeline').delete().eq('pacote_id', editingService.id)
+          }
+        } else {
+          await supabase.from('etapas_pipeline').delete().eq('pacote_id', editingService.id)
+        }
       }
 
       let savedCosts: Cost[] = []
@@ -238,7 +250,7 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
       }
 
       let savedFormFields: FormField[] = []
-      if (formIsPacote) {
+      if (!formIsPacote) {
         const fieldsPayload = formFields.filter(f => f.pergunta.trim()).map((f, idx) => ({ tipos_sessao_id: savedService.id, pergunta: f.pergunta, tipo_resposta: f.tipo_resposta, obrigatorio: f.obrigatorio, ordem: idx }))
         if (fieldsPayload.length > 0) {
           const { data } = await supabase.from('servico_formularios').insert(fieldsPayload).select()
@@ -247,13 +259,16 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
       }
 
       let newEtapas = [...etapas.filter(e => e.pacote_id !== savedService.id)]
-      if (formIsPacote && usarFunilExclusivo && formEtapas.length > 0) {
+      if (!formIsPacote && usarFunilExclusivo && formEtapas.length > 0) {
         const etapasPayload = formEtapas.filter(e => e.nome_etapa.trim()).map((e, idx) => ({
+          ...(e.id ? { id: e.id } : {}),
           fotografo_id: fotografoId, pacote_id: savedService.id, nome_etapa: e.nome_etapa, 
-          ordem: idx + 1, cor_hex: e.cor_hex, tipo_pipeline: e.tipo_pipeline
+          ordem: idx + 1, cor_hex: e.cor_hex, tipo_pipeline: e.tipo_pipeline, meta_acoes: e.meta_acoes || 0,
+          transicoes_permitidas: e.transicoes_permitidas
         }))
         if (etapasPayload.length > 0) {
-          const { data } = await supabase.from('etapas_pipeline').insert(etapasPayload).select()
+          const { data, error: errEtapas } = await supabase.from('etapas_pipeline').upsert(etapasPayload).select()
+          if (errEtapas) throw errEtapas
           if (data) newEtapas = [...newEtapas, ...data]
         }
       }
@@ -329,8 +344,8 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
           </h1>
           <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
             {mainTab === 'pacotes' 
-              ? 'Configure o que você vende para o cliente (Preço, Briefing, Funil exclusivo).' 
-              : 'Configure o trabalho braçal do estúdio (Tempo, Custo base) para compor pacotes.'}
+              ? 'Configure o que você vende para o cliente (Preço, Funil exclusivo).' 
+              : 'Configure o trabalho braçal do estúdio (Tempo, Custo base, Briefing) para compor pacotes.'}
           </p>
         </div>
 
@@ -462,8 +477,8 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
                 <TabButton active={activeTab === 'geral'} onClick={() => setActiveTab('geral')} icon={<Settings2 size={14}/>} label="Dados Gerais" />
                 {!formIsPacote && <TabButton active={activeTab === 'custos'} onClick={() => setActiveTab('custos')} icon={<DollarSign size={14}/>} label="Custos de Produção" />}
                 {formIsPacote && <TabButton active={activeTab === 'itens'} onClick={() => setActiveTab('itens')} icon={<Layers size={14}/>} label="Serviços Inclusos" />}
-                {formIsPacote && <TabButton active={activeTab === 'formulario'} onClick={() => setActiveTab('formulario')} icon={<AlignLeft size={14}/>} label="Briefing do Pacote" />}
-                {formIsPacote && <TabButton active={activeTab === 'funil'} onClick={() => setActiveTab('funil')} icon={<Kanban size={14}/>} label="Funil & Jornada" />}
+                {!formIsPacote && <TabButton active={activeTab === 'formulario'} onClick={() => setActiveTab('formulario')} icon={<AlignLeft size={14}/>} label="Briefing do Serviço" />}
+                {!formIsPacote && <TabButton active={activeTab === 'funil'} onClick={() => setActiveTab('funil')} icon={<Kanban size={14}/>} label="Funil & Jornada" />}
               </div>
             </div>
 
@@ -514,10 +529,10 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
                   </div>
                 )}
 
-                {activeTab === 'formulario' && formIsPacote && (
+                {activeTab === 'formulario' && !formIsPacote && (
                   <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <p style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', margin: 0, maxWidth: '400px' }}>Crie perguntas que o cliente deve responder ao orçar esse pacote no CRM.</p>
+                      <p style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', margin: 0, maxWidth: '400px' }}>Crie perguntas que o cliente deve responder ao orçar um pacote que inclua este serviço no CRM.</p>
                       <button type="button" onClick={addFormField} className="btn btn-secondary btn-sm"><Plus size={14} /> Nova Pergunta</button>
                     </div>
                     {formFields.length === 0 ? (
@@ -538,13 +553,13 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
                   </div>
                 )}
 
-                {activeTab === 'funil' && formIsPacote && (
+                {activeTab === 'funil' && !formIsPacote && (
                   <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', background: 'var(--color-accent-subtle)', borderRadius: 'var(--radius-md)', border: `1px solid var(--color-accent)` }}>
                       <div>
                         <h4 style={{ margin: '0 0 4px 0', fontSize: '0.9375rem', color: 'var(--color-accent)' }}>Funil Exclusivo</h4>
                         <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--color-text-secondary)', maxWidth: '400px' }}>
-                          Ative se este pacote precisar de uma jornada ou esteira de produção diferente do padrão do estúdio.
+                          Ative se este serviço precisar de uma jornada ou esteira de produção diferente do padrão do estúdio.
                         </p>
                       </div>
                       <label className="switch">
@@ -568,16 +583,44 @@ export default function ServicosClient({ fotografoId, servicosIniciais, etapasIn
                         <div style={{ textAlign: 'center', padding: '30px', border: '1px dashed var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-muted)' }}>Nenhuma etapa configurada.</div>
                       ) : (
                         formEtapas.filter(e => e.tipo_pipeline === tipoPipelineAtivo).map((etapa, idx) => (
-                          <div key={idx} style={{ display: 'flex', gap: '10px', alignItems: 'center', background: 'var(--color-bg-base)', padding: '12px', borderRadius: 'var(--radius-md)' }}>
-                            <GripVertical size={16} color="var(--color-text-muted)" style={{ cursor: 'grab' }} />
-                            <div style={{ flex: 1 }}><input type="text" className="form-input" style={{ fontSize: '0.875rem' }} placeholder="Nome da etapa (Ex: Orçamento Enviado)" value={etapa.nome_etapa} onChange={e => updateEtapa(idx, 'nome_etapa', e.target.value)} required /></div>
-                            
-                            <select className="form-select" style={{ width: '120px', fontSize: '0.875rem' }} value={etapa.cor_hex} onChange={e => updateEtapa(idx, 'cor_hex', e.target.value)}>
-                              {PRESET_COLORS.map(c => <option key={c.hex} value={c.hex}>{c.label}</option>)}
-                            </select>
-                            <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: etapa.cor_hex, flexShrink: 0 }}></span>
+                          <div key={idx} style={{ display: 'flex', flexDirection: 'column', background: 'var(--color-bg-base)', padding: '12px', borderRadius: 'var(--radius-md)', gap: '8px' }}>
+                            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                              <GripVertical size={16} color="var(--color-text-muted)" style={{ cursor: 'grab' }} />
+                              <div style={{ flex: 1 }}><input type="text" className="form-input" style={{ fontSize: '0.875rem' }} placeholder="Nome da etapa" value={etapa.nome_etapa} onChange={e => updateEtapa(idx, 'nome_etapa', e.target.value)} required /></div>
+                              <input type="number" className="form-input" style={{ width: '80px', fontSize: '0.875rem' }} placeholder="Meta: 0" min="0" value={etapa.meta_acoes || 0} onChange={e => updateEtapa(idx, 'meta_acoes', parseInt(e.target.value) || 0)} title="Meta de Ações/Tarefas para esta etapa" />
+                              
+                              <select className="form-select" style={{ width: '120px', fontSize: '0.875rem' }} value={etapa.cor_hex} onChange={e => updateEtapa(idx, 'cor_hex', e.target.value)}>
+                                {PRESET_COLORS.map(c => <option key={c.hex} value={c.hex}>{c.label}</option>)}
+                              </select>
+                              <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: etapa.cor_hex, flexShrink: 0 }}></span>
 
-                            <button type="button" onClick={() => removeEtapa(idx)} className="btn btn-ghost btn-icon btn-sm" style={{ color: 'var(--color-danger)' }}><Trash2 size={14} /></button>
+                              <button type="button" onClick={() => setExpandedRegrasIdx(expandedRegrasIdx === idx ? null : idx)} className="btn btn-ghost btn-sm" style={{ padding: '0 8px', color: (etapa.transicoes_permitidas && etapa.transicoes_permitidas.length > 0) ? 'var(--color-accent)' : 'var(--color-text-muted)' }} title="Regras de transição">Regras</button>
+                              <button type="button" onClick={() => removeEtapa(idx)} className="btn btn-ghost btn-icon btn-sm" style={{ color: 'var(--color-danger)' }}><Trash2 size={14} /></button>
+                            </div>
+                            
+                            {expandedRegrasIdx === idx && (
+                              <div style={{ padding: '10px', background: 'var(--color-bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border-subtle)', marginLeft: '26px' }}>
+                                <div style={{ fontSize: '0.75rem', fontWeight: 600, marginBottom: '8px' }}>Transições Permitidas (Para quais etapas o lead pode ir)</div>
+                                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginBottom: '8px' }}>Se não marcar nenhuma, a movimentação é livre para qualquer etapa.</div>
+                                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                                  {formEtapas.filter(e => e.tipo_pipeline === tipoPipelineAtivo).map((outra, oIdx) => {
+                                    if (oIdx === idx) return null;
+                                    const checked = etapa.transicoes_permitidas?.includes(oIdx + 1) || false;
+                                    return (
+                                      <label key={oIdx} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.8125rem', cursor: 'pointer' }}>
+                                        <input type="checkbox" checked={checked} onChange={e => {
+                                          let atual = etapa.transicoes_permitidas || [];
+                                          if (e.target.checked) atual = [...atual, oIdx + 1];
+                                          else atual = atual.filter(a => a !== oIdx + 1);
+                                          updateEtapa(idx, 'transicoes_permitidas', atual.length > 0 ? atual : null);
+                                        }} />
+                                        {outra.nome_etapa || `Etapa ${oIdx + 1}`}
+                                      </label>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         ))
                       )}

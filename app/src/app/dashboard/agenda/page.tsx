@@ -26,6 +26,7 @@ export default async function AgendaPage() {
     .select(`
       id, titulo_sessao, tipo_sessao, data_hora_inicio, data_hora_fim,
       local_sessao, status, limite_fotos, fotos_selecionadas, etapa_producao_id, valor_foto_extra,
+      data_entrada_etapa, criado_em,
       leads_propostas (id, nome_cliente, whatsapp_cliente)
     `)
     .eq('fotografo_id', perfil.id)

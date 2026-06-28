@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import {
   Plus, Kanban, List, Search,
   Phone, Calendar, DollarSign,
-  ThumbsUp, ThumbsDown, MoreHorizontal,
+  ThumbsUp, ThumbsDown, MoreHorizontal, Trash2,
   Users, TrendingUp, Settings2, Loader2, ExternalLink,
 } from 'lucide-react'
 import ModalNovoLead from '@/components/ModalNovoLead'
@@ -19,6 +19,8 @@ type Etapa = {
   cor_hex: string
   tipo_pipeline: string
   pacote_id?: string | null
+  meta_acoes?: number
+  transicoes_permitidas?: number[] | null
 }
 
 type Lead = {
@@ -34,6 +36,9 @@ type Lead = {
   origem_lead: string | null
   motivo_perda: string | null
   criado_em: string
+  historico_acoes: { titulo: string; data: string; etapa_id: string }[] | null
+  cliente_id?: string | null
+  data_entrada_etapa?: string
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -101,11 +106,17 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
   const [view, setView] = useState<'kanban' | 'lista'>('kanban')
   const [draggedLeadId, setDraggedLeadId] = useState<string | null>(null)
   const [dragOverEtapaId, setDragOverEtapaId] = useState<string | null>(null)
+  const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [filtroStatus, setFiltroStatus] = useState<string>('todos')
+  const [pipelineAtivo, setPipelineAtivo] = useState<string>('todos')
   const [showModal, setShowModal] = useState(false)
   const [modalPerdeu, setModalPerdeu] = useState<Lead | null>(null)
   const [modalGanhou, setModalGanhou] = useState<Lead | null>(null)
+  const [modalNovaAcao, setModalNovaAcao] = useState<Lead | null>(null)
+  const [modalHistorico, setModalHistorico] = useState<Lead | null>(null)
+  const [novaAcaoTitulo, setNovaAcaoTitulo] = useState('')
+  const [salvandoAcao, setSalvandoAcao] = useState(false)
   const [leadMenuOpen, setLeadMenuOpen] = useState<string | null>(null)
   const [criandoEtapas, setCriandoEtapas] = useState(false)
 
@@ -140,8 +151,67 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
   }
 
   async function moverParaEtapa(leadId: string, etapaId: string) {
-    await supabase.from('leads_propostas').update({ etapa_pipeline_id: etapaId }).eq('id', leadId)
-    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, etapa_pipeline_id: etapaId } : l))
+    let finalEtapaId = etapaId
+    if (etapaId.includes(',')) {
+      const lead = leads.find(l => l.id === leadId)
+      if (lead) {
+        const servicoId = tiposSessao.find(t => t.nome.toLowerCase() === lead.tipo_servico.toLowerCase() || t.id === lead.tipo_servico)?.id
+        const ids = etapaId.split(',')
+        const especifica = etapas.find(e => ids.includes(e.id) && e.pacote_id === servicoId)
+        if (especifica) {
+          finalEtapaId = especifica.id
+        } else {
+          const padrao = etapas.find(e => ids.includes(e.id) && !e.pacote_id)
+          finalEtapaId = padrao ? padrao.id : ids[0]
+        }
+      }
+    }
+    
+    // Optimistic update
+    setLeads(prev => prev.map(l => l.id === leadId ? { 
+      ...l, 
+      etapa_pipeline_id: finalEtapaId,
+      data_entrada_etapa: new Date().toISOString()
+    } : l))
+    
+    setDraggedLeadId(null)
+    setDragOverEtapaId(null)
+    
+    await supabase.from('leads_propostas').update({ etapa_pipeline_id: finalEtapaId }).eq('id', leadId)
+  }
+
+  async function reordenarEtapas(draggedId: string, targetId: string) {
+    if (draggedId === targetId) return
+    
+    const newEtapas = [...etapas]
+    const draggedIndex = newEtapas.findIndex(e => e.id === draggedId)
+    const targetIndex = newEtapas.findIndex(e => e.id === targetId)
+    
+    if (draggedIndex === -1 || targetIndex === -1) return
+    
+    const [draggedItem] = newEtapas.splice(draggedIndex, 1)
+    newEtapas.splice(targetIndex, 0, draggedItem)
+    
+    const updatedEtapas = newEtapas.map((e, index) => ({
+      ...e,
+      ordem: index + 1
+    }))
+    
+    setEtapas(updatedEtapas)
+    
+    // Execute sequential updates (constraint must be dropped beforehand)
+    for (const e of updatedEtapas) {
+      await supabase.from('etapas_pipeline').update({ ordem: e.ordem }).eq('id', e.id)
+    }
+  }
+
+  async function excluirLead(leadId: string) {
+    if (!window.confirm('Tem certeza que deseja excluir este orçamento? Esta ação não pode ser desfeita.')) return
+    
+    // Optimistic update
+    setLeads(prev => prev.filter(l => l.id !== leadId))
+    
+    await supabase.from('leads_propostas').delete().eq('id', leadId)
   }
 
   function marcarGanhou(lead: Lead) {
@@ -173,6 +243,22 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
     setModalPerdeu(null)
   }
 
+  async function registrarAcao(e: React.FormEvent) {
+    e.preventDefault()
+    if (!modalNovaAcao || !novaAcaoTitulo.trim()) return
+    setSalvandoAcao(true)
+    const nova = { titulo: novaAcaoTitulo, data: new Date().toISOString(), etapa_id: modalNovaAcao.etapa_pipeline_id! }
+    const historicoAtual = modalNovaAcao.historico_acoes || []
+    const novoHistorico = [...historicoAtual, nova]
+    const { error } = await supabase.from('leads_propostas').update({ historico_acoes: novoHistorico }).eq('id', modalNovaAcao.id)
+    if (!error) {
+      setLeads(prev => prev.map(l => l.id === modalNovaAcao.id ? { ...l, historico_acoes: novoHistorico } : l))
+    }
+    setModalNovaAcao(null)
+    setNovaAcaoTitulo('')
+    setSalvandoAcao(false)
+  }
+
   // Filtros
   const leadsFiltrados = leads.filter(l => {
     const matchSearch = l.nome_cliente.toLowerCase().includes(search.toLowerCase()) ||
@@ -183,6 +269,47 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
 
   const leadsAtivos = leadsFiltrados.filter(l => !['perdido', 'arquivado'].includes(l.status))
   const leadsKanban = leadsFiltrados.filter(l => !['perdido', 'arquivado', 'aprovado', 'confirmado'].includes(l.status))
+
+  // Pipelines disponíveis e filtro
+  const funisDisponiveis = [
+    { id: 'todos', nome: 'Todos os Funis' },
+    { id: 'padrao', nome: 'Funil Padrão' },
+    ...tiposSessao
+      .filter(t => etapas.some(e => e.pacote_id === t.id))
+      .map(t => ({ id: t.id, nome: `Funil: ${t.nome}` }))
+  ]
+
+  let etapasKanban: Etapa[] = []
+  if (pipelineAtivo === 'todos') {
+    const grupos = new Map<string, Etapa[]>()
+    etapas.forEach(e => {
+      const key = e.nome_etapa.trim().toLowerCase()
+      if (!grupos.has(key)) grupos.set(key, [])
+      grupos.get(key)!.push(e)
+    })
+    etapasKanban = Array.from(grupos.values()).map(grupo => {
+      const p = grupo[0]
+      return {
+        id: grupo.map(g => g.id).join(','),
+        nome_etapa: p.nome_etapa,
+        ordem: Math.min(...grupo.map(g => g.ordem)),
+        cor_hex: p.cor_hex,
+        tipo_pipeline: p.tipo_pipeline,
+        meta_acoes: p.meta_acoes,
+        transicoes_permitidas: p.transicoes_permitidas
+      }
+    }).sort((a, b) => a.ordem - b.ordem)
+  } else {
+    etapasKanban = etapas.filter(e => pipelineAtivo === 'padrao' ? !e.pacote_id : e.pacote_id === pipelineAtivo)
+  }
+  
+  const leadsGanhosAtuais = leads.filter(l => {
+    if (!['aprovado', 'confirmado'].includes(l.status)) return false;
+    if (pipelineAtivo === 'todos') return true;
+    const etapa = etapas.find(e => e.id === l.etapa_pipeline_id);
+    if (pipelineAtivo === 'padrao') return !etapa || !etapa.pacote_id;
+    return etapa?.pacote_id === pipelineAtivo;
+  })
 
   // Métricas rápidas
   const totalLeads = leads.filter(l => l.status !== 'perdido').length
@@ -284,19 +411,66 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
 
         {/* KANBAN VIEW */}
         {view === 'kanban' && etapas.length > 0 && (
-          <div style={{ display: 'flex', gap: '14px', overflowX: 'auto', paddingBottom: '16px', alignItems: 'flex-start' }}>
-            {etapas.map(etapa => {
-              const leadsEtapa = leadsKanban.filter(l => l.etapa_pipeline_id === etapa.id)
-              return (
+          <div className="animate-fade-in">
+            {funisDisponiveis.length > 1 && (
+              <div style={{ marginBottom: '16px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', fontWeight: 500 }}>Visualizando:</span>
+                <select 
+                  className="form-select form-select-sm" 
+                  style={{ width: 'auto', minWidth: '180px', padding: '6px 12px', fontSize: '0.8125rem' }}
+                  value={pipelineAtivo} 
+                  onChange={e => setPipelineAtivo(e.target.value)}
+                >
+                  {funisDisponiveis.map(f => (
+                    <option key={f.id} value={f.id}>{f.nome}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '14px', overflowX: 'auto', paddingBottom: '16px', alignItems: 'flex-start' }}>
+              {etapasKanban.map(etapa => {
+                const leadsEtapa = leadsKanban.filter(l => l.etapa_pipeline_id && etapa.id.includes(l.etapa_pipeline_id))
+                
+                const leadArrastado = draggedLeadId ? leads.find(l => l.id === draggedLeadId) : null
+                let isAllowed = true
+                if (leadArrastado) {
+                  const etapaOrigem = etapas.find(e => e.id === leadArrastado.etapa_pipeline_id)
+                  if (etapaOrigem && etapaOrigem.transicoes_permitidas && etapaOrigem.transicoes_permitidas.length > 0) {
+                    isAllowed = etapaOrigem.transicoes_permitidas.includes(etapa.ordem) || etapa.id.includes(etapaOrigem.id)
+                  }
+                }
+
+                return (
                 <div key={etapa.id} 
-                  onDragOver={(e) => { e.preventDefault(); setDragOverEtapaId(etapa.id) }}
+                  draggable={true}
+                  onDragStart={(e) => {
+                    e.stopPropagation();
+                    e.dataTransfer.setData('colId', etapa.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                    setTimeout(() => setDraggedColumnId(etapa.id), 0);
+                  }}
+                  onDragEnd={() => setDraggedColumnId(null)}
+                  onDragOver={(e) => { 
+                    e.preventDefault(); 
+                    if (!draggedColumnId && !isAllowed) return; 
+                    setDragOverEtapaId(etapa.id) 
+                  }}
                   onDragLeave={() => setDragOverEtapaId(null)}
                   onDrop={(e) => {
                     e.preventDefault();
                     setDragOverEtapaId(null);
+                    
+                    const colId = e.dataTransfer.getData('colId');
+                    if (colId) {
+                      reordenarEtapas(colId, etapa.id);
+                      return;
+                    }
+                    
+                    if (!isAllowed) return;
                     const leadId = e.dataTransfer.getData('leadId');
                     if (leadId) moverParaEtapa(leadId, etapa.id);
                   }}
+                  data-type="column"
                   style={{
                   minWidth: '260px', width: '260px',
                   background: dragOverEtapaId === etapa.id ? 'var(--color-bg-elevated)' : 'var(--color-bg-surface)',
@@ -305,6 +479,10 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
                   display: 'flex', flexDirection: 'column',
                   maxHeight: 'calc(100vh - 280px)',
                   transition: 'all 0.2s ease',
+                  opacity: draggedLeadId && !isAllowed ? 0.3 : (draggedColumnId === etapa.id ? 0.5 : 1),
+                  filter: draggedLeadId && !isAllowed ? 'grayscale(100%)' : 'none',
+                  pointerEvents: draggedLeadId && !isAllowed ? 'none' : 'auto',
+                  cursor: draggedLeadId ? 'default' : 'grab'
                 }}>
                   {/* Header da coluna */}
                   <div style={{
@@ -340,13 +518,16 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
                         onMover={moverParaEtapa}
                         onGanhou={() => marcarGanhou(lead)}
                         onPerdeu={() => setModalPerdeu(lead)}
+                        onExcluir={() => excluirLead(lead.id)}
+                        onNovaAcao={() => setModalNovaAcao(lead)}
+                        onVerHistorico={() => setModalHistorico(lead)}
                         menuOpen={leadMenuOpen === lead.id}
                         onMenuToggle={() => setLeadMenuOpen(leadMenuOpen === lead.id ? null : lead.id)}
                         isDragging={draggedLeadId === lead.id}
                         onDragStart={(e) => {
+                          e.stopPropagation();
                           e.dataTransfer.setData('leadId', lead.id)
                           e.dataTransfer.effectAllowed = 'move'
-                          // Timeout to allow the drag image to be generated before hiding the original
                           setTimeout(() => setDraggedLeadId(lead.id), 0)
                         }}
                         onDragEnd={() => setDraggedLeadId(null)}
@@ -359,24 +540,25 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
             })}
 
             {/* Coluna Aprovados */}
-            {leads.some(l => ['aprovado', 'confirmado'].includes(l.status)) && (
+            {leadsGanhosAtuais.length > 0 && (
               <div style={{ minWidth: '260px', width: '260px', background: 'var(--color-bg-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 280px)' }}>
                 <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--color-border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '3px solid var(--color-success)', borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <ThumbsUp size={14} color="var(--color-success)" />
                     <span style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--color-success)' }}>Ganhos</span>
                     <span style={{ background: 'var(--color-success-subtle)', color: 'var(--color-success)', padding: '1px 8px', borderRadius: 'var(--radius-full)', fontSize: '0.75rem', fontWeight: 600 }}>
-                      {leads.filter(l => ['aprovado', 'confirmado'].includes(l.status)).length}
+                      {leadsGanhosAtuais.length}
                     </span>
                   </div>
                 </div>
                 <div style={{ flex: 1, overflowY: 'auto', padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {leads.filter(l => ['aprovado', 'confirmado'].includes(l.status)).map(lead => (
-                    <LeadCard key={lead.id} lead={lead} etapas={etapas} onMover={moverParaEtapa} onGanhou={() => {}} onPerdeu={() => {}} menuOpen={false} onMenuToggle={() => {}} isDragging={false} getServiceLabel={getServiceLabel} />
+                  {leadsGanhosAtuais.map(lead => (
+                    <LeadCard key={lead.id} lead={lead} etapas={etapas} onMover={moverParaEtapa} onGanhou={() => setModalGanhou(lead)} onPerdeu={() => setModalPerdeu(lead)} onExcluir={() => excluirLead(lead.id)} onNovaAcao={() => {}} onVerHistorico={() => setModalHistorico(lead)} menuOpen={leadMenuOpen === lead.id} onMenuToggle={() => setLeadMenuOpen(leadMenuOpen === lead.id ? null : lead.id)} getServiceLabel={getServiceLabel} />
                   ))}
                 </div>
               </div>
             )}
+          </div>
           </div>
         )}
 
@@ -485,6 +667,67 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
           onClose={() => setModalGanhou(null)}
         />
       )}
+      {modalNovaAcao && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1050, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div className="animate-fade-in" style={{ background: 'var(--color-bg-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-xl)', width: '100%', maxWidth: '400px', padding: '24px', boxShadow: 'var(--shadow-xl)' }}>
+            <h3 style={{ margin: '0 0 4px', fontSize: '1.1rem' }}>Registrar Ação</h3>
+            <p style={{ margin: '0 0 20px', fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>Qual ação você realizou para o lead <strong>{modalNovaAcao.nome_cliente}</strong>?</p>
+            
+            <form onSubmit={registrarAcao} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Título da Ação (Ex: Mensagem, Ligação)</label>
+                <input type="text" className="form-input" value={novaAcaoTitulo} onChange={e => setNovaAcaoTitulo(e.target.value)} required autoFocus placeholder="Ex: Follow up 1" />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
+                <button type="button" onClick={() => setModalNovaAcao(null)} className="btn btn-ghost" disabled={salvandoAcao}>Cancelar</button>
+                <button type="submit" className="btn btn-primary" disabled={salvandoAcao}>{salvandoAcao ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : 'Registrar Ação'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {modalHistorico && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1050, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <div className="animate-fade-in" style={{ background: 'var(--color-bg-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-xl)', width: '100%', maxWidth: '500px', padding: '24px', boxShadow: 'var(--shadow-xl)', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+            <h3 style={{ margin: '0 0 4px', fontSize: '1.1rem' }}>Histórico de Ações</h3>
+            <p style={{ margin: '0 0 20px', fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>Lead: <strong>{modalHistorico.nome_cliente}</strong></p>
+            
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px', paddingRight: '4px' }}>
+              {!modalHistorico.historico_acoes || modalHistorico.historico_acoes.length === 0 ? (
+                <div style={{ textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.875rem', padding: '20px 0' }}>Nenhuma ação registrada neste lead.</div>
+              ) : (
+                Array.from(new Set(modalHistorico.historico_acoes.map(a => a.etapa_id))).map(etapaId => {
+                  const etapa = etapas.find(e => e.id === etapaId)
+                  const acoes = modalHistorico.historico_acoes!.filter(a => a.etapa_id === etapaId)
+                  return (
+                    <div key={etapaId} style={{ background: 'var(--color-bg-elevated)', borderRadius: 'var(--radius-lg)', padding: '12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', borderBottom: '1px solid var(--color-border-subtle)', paddingBottom: '8px' }}>
+                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: etapa?.cor_hex || 'var(--color-text-muted)' }} />
+                        <span style={{ fontSize: '0.8125rem', fontWeight: 600 }}>{etapa?.nome_etapa || 'Etapa Desconhecida'}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--color-text-muted)', background: 'var(--color-bg-base)', padding: '2px 8px', borderRadius: 'var(--radius-full)' }}>
+                          {acoes.length} {etapa?.meta_acoes ? `/ ${etapa.meta_acoes}` : ''}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {acoes.map((acao, i) => (
+                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8125rem' }}>
+                            <span>{acao.titulo}</span>
+                            <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>{new Date(acao.data).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px', paddingTop: '16px', borderTop: '1px solid var(--color-border-subtle)' }}>
+              <button onClick={() => setModalHistorico(null)} className="btn btn-ghost">Fechar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
@@ -493,13 +736,16 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
 // Sub-componente: Card do Lead no Kanban
 // ============================================================
 function LeadCard({
-  lead, etapas, onMover, onGanhou, onPerdeu, menuOpen, onMenuToggle, isDragging, onDragStart, onDragEnd, getServiceLabel
+  lead, etapas, onMover, onGanhou, onPerdeu, onExcluir, onNovaAcao, onVerHistorico, menuOpen, onMenuToggle, isDragging, onDragStart, onDragEnd, getServiceLabel
 }: {
   lead: Lead
   etapas: Etapa[]
   onMover: (leadId: string, etapaId: string) => void
   onGanhou: () => void
   onPerdeu: () => void
+  onExcluir: () => void
+  onNovaAcao: () => void
+  onVerHistorico: () => void
   menuOpen: boolean
   onMenuToggle: () => void
   isDragging?: boolean
@@ -508,6 +754,12 @@ function LeadCard({
   getServiceLabel: (val: string) => string
 }) {
   const isGanho = ['aprovado', 'confirmado'].includes(lead.status)
+  const etapaAtual = etapas.find(e => e.id === lead.etapa_pipeline_id)
+  const metaAcoes = etapaAtual?.meta_acoes || 0
+  const acoesNestaEtapa = (lead.historico_acoes || []).filter(a => a.etapa_id === lead.etapa_pipeline_id)
+  const pctCompleto = metaAcoes > 0 ? Math.min(100, Math.round((acoesNestaEtapa.length / metaAcoes) * 100)) : 0
+  
+  const diasNaEtapa = Math.floor((Date.now() - new Date(lead.data_entrada_etapa || lead.criado_em).getTime()) / (1000 * 60 * 60 * 24))
 
   return (
     <div 
@@ -533,6 +785,13 @@ function LeadCard({
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {lead.nome_cliente}
+            {lead.cliente_id && (
+              <span title="Cliente Recorrente" style={{ marginLeft: '4px', display: 'inline-flex', alignItems: 'center', color: '#eab308' }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" />
+                </svg>
+              </span>
+            )}
           </div>
           <span className="badge" style={{ background: 'var(--color-bg-surface)', color: 'var(--color-text-muted)', fontSize: '0.7rem', padding: '1px 6px' }}>
             {getServiceLabel(lead.tipo_servico)}
@@ -543,34 +802,6 @@ function LeadCard({
             <button onClick={onMenuToggle} className="btn btn-ghost" style={{ padding: '3px', borderRadius: 'var(--radius-sm)' }}>
               <MoreHorizontal size={15} />
             </button>
-            {menuOpen && (
-              <div style={{
-                position: 'absolute', right: 0, top: '100%', zIndex: 200,
-                background: 'var(--color-bg-overlay)',
-                border: '1px solid var(--color-border)',
-                borderRadius: 'var(--radius-md)',
-                boxShadow: 'var(--shadow-lg)',
-                minWidth: '160px',
-                overflow: 'hidden',
-              }}>
-                <div style={{ padding: '6px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', padding: '4px 8px', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Mover para</div>
-                  {etapas.map(e => (
-                    <button key={e.id} onClick={() => onMover(lead.id, e.id)} className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start', fontSize: '0.8125rem', gap: '8px' }}>
-                      <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: e.cor_hex, flexShrink: 0 }} />
-                      {e.nome_etapa}
-                    </button>
-                  ))}
-                  <hr className="divider" style={{ margin: '4px 0' }} />
-                  <button onClick={onGanhou} className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start', color: 'var(--color-success)', fontSize: '0.8125rem' }}>
-                    <ThumbsUp size={13} /> Marcar como Ganho
-                  </button>
-                  <button onClick={onPerdeu} className="btn btn-ghost btn-sm" style={{ justifyContent: 'flex-start', color: 'var(--color-danger)', fontSize: '0.8125rem' }}>
-                    <ThumbsDown size={13} /> Marcar como Perdido
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -593,6 +824,88 @@ function LeadCard({
           </div>
         )}
       </div>
+
+      {/* Ações Rápidas (Inline Expansion) */}
+      {menuOpen && !isGanho && (
+        <div 
+          className="animate-fade-in"
+          style={{
+            marginTop: '12px',
+            paddingTop: '8px',
+            borderTop: '1px solid var(--color-border-subtle)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '4px'
+        }}>
+          <button 
+            onClick={onGanhou} 
+            className="btn btn-ghost" 
+            style={{ justifyContent: 'flex-start', color: 'var(--color-text-primary)', fontSize: '0.8125rem', padding: '6px 10px', fontWeight: 500, borderRadius: 'var(--radius-sm)' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '24px', height: '24px', borderRadius: '6px', background: 'var(--color-success-subtle)', color: 'var(--color-success)', marginRight: '10px' }}>
+              <ThumbsUp size={14} />
+            </div>
+            Marcar como Ganho
+          </button>
+          <button 
+            onClick={onPerdeu} 
+            className="btn btn-ghost" 
+            style={{ justifyContent: 'flex-start', color: 'var(--color-text-primary)', fontSize: '0.8125rem', padding: '6px 10px', fontWeight: 500, borderRadius: 'var(--radius-sm)' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '24px', height: '24px', borderRadius: '6px', background: 'var(--color-danger-subtle)', color: 'var(--color-danger)', marginRight: '10px' }}>
+              <ThumbsDown size={14} />
+            </div>
+            Marcar como Perdido
+          </button>
+          <button 
+            onClick={onExcluir} 
+            className="btn btn-ghost" 
+            style={{ justifyContent: 'flex-start', color: 'var(--color-text-primary)', fontSize: '0.8125rem', padding: '6px 10px', fontWeight: 500, borderRadius: 'var(--radius-sm)' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '24px', height: '24px', borderRadius: '6px', background: 'var(--color-bg-hover)', color: 'var(--color-text-muted)', marginRight: '10px' }}>
+              <Trash2 size={14} />
+            </div>
+            Excluir Orçamento
+          </button>
+        </div>
+      )}
+
+      {metaAcoes > 0 && (
+        <div style={{ marginTop: '12px', borderTop: '1px solid var(--color-border-subtle)', paddingTop: '10px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+            <button 
+              onClick={(e) => { e.stopPropagation(); onVerHistorico(); }} 
+              style={{ background: 'none', border: 'none', padding: 0, fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', cursor: 'pointer' }}
+              title="Ver Histórico de Ações"
+            >
+              Ações: {acoesNestaEtapa.length} / {metaAcoes}
+            </button>
+            <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', textAlign: 'right', display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <span>⏳ {diasNaEtapa}d</span>
+              <span>{pctCompleto}%</span>
+              {!isGanho && <button onClick={(e) => { e.stopPropagation(); onNovaAcao(); }} className="btn btn-ghost btn-icon btn-sm" style={{ padding: 0, height: 'auto', color: 'var(--color-accent)' }} title="Registrar nova ação"><Plus size={14} /></button>}
+            </div>
+          </div>
+          <div style={{ width: '100%', height: '4px', background: 'var(--color-bg-base)', borderRadius: '2px', overflow: 'hidden' }}>
+            <div style={{ width: `${pctCompleto}%`, height: '100%', background: pctCompleto >= 100 ? 'var(--color-success)' : 'var(--color-accent)', transition: 'width 0.3s ease' }} />
+          </div>
+        </div>
+      )}
+
+      {isGanho && lead.historico_acoes && lead.historico_acoes.length > 0 && !metaAcoes && (
+        <div style={{ marginTop: '12px', borderTop: '1px solid var(--color-border-subtle)', paddingTop: '8px' }}>
+          <button onClick={(e) => { e.stopPropagation(); onVerHistorico(); }} style={{ background: 'none', border: 'none', padding: 0, fontSize: '0.75rem', color: 'var(--color-text-muted)', cursor: 'pointer', textDecoration: 'underline' }}>
+            Ver histórico de ações
+          </button>
+        </div>
+      )}
+
+      {/* Indicador de dias se não houver metas (e não for ganho) */}
+      {metaAcoes === 0 && !isGanho && (
+        <div style={{ marginTop: '8px', fontSize: '0.65rem', color: 'var(--color-text-muted)', textAlign: 'right', display: 'flex', justifyContent: 'flex-end' }}>
+          ⏳ {diasNaEtapa} {diasNaEtapa === 1 ? 'dia' : 'dias'} na etapa
+        </div>
+      )}
 
       {isGanho && (
         <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '5px', color: 'var(--color-success)', fontSize: '0.75rem', fontWeight: 600 }}>

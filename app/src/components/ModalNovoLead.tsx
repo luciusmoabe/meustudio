@@ -19,11 +19,13 @@ type TipoSessao = {
   descricao: string | null
   is_pacote?: boolean
   servico_formularios?: { id: string; pergunta: string; tipo_resposta: string; obrigatorio: boolean; ordem: number }[]
+  pacote_servicos?: { id: string; servico_id: string; quantidade: number }[]
 }
 
 type Etapa = {
   id: string
   nome_etapa: string
+  ordem: number
   pacote_id?: string | null
 }
 
@@ -43,7 +45,22 @@ export default function ModalNovoLead({ fotografoId, etapas, onLeadCriado, onClo
   const pacotes = tiposSessao?.filter(t => t.is_pacote) || []
   const firstService = pacotes.length > 0 ? pacotes[0] : null
   
+  const [clientes, setClientes] = useState<{ id: string; nome: string; email: string | null; whatsapp: string | null }[]>([])
+
+  useEffect(() => {
+    async function fetchClientes() {
+      const { data } = await supabase
+        .from('clientes')
+        .select('id, nome, email, whatsapp')
+        .eq('fotografo_id', fotografoId)
+        .order('nome', { ascending: true })
+      if (data) setClientes(data)
+    }
+    fetchClientes()
+  }, [fotografoId, supabase])
+
   const [form, setForm] = useState({
+    cliente_id: '',
     nome_cliente: '',
     whatsapp_cliente: '',
     email_cliente: '',
@@ -58,10 +75,26 @@ export default function ModalNovoLead({ fotografoId, etapas, onLeadCriado, onClo
   const [respostas, setRespostas] = useState<Record<string, any>>({})
 
   const selectedService = pacotes.find(t => t.id === form.tipo_servico)
-  const formFields = selectedService?.servico_formularios?.sort((a, b) => a.ordem - b.ordem) || []
+  const formFields = (() => {
+    if (!selectedService || !selectedService.pacote_servicos) return []
+    let fields: { id: string; pergunta: string; tipo_resposta: string; obrigatorio: boolean; ordem: number }[] = []
+    selectedService.pacote_servicos.forEach(ps => {
+      const srv = tiposSessao.find(t => t.id === ps.servico_id)
+      if (srv?.servico_formularios) fields.push(...srv.servico_formularios)
+    })
+    return fields.sort((a, b) => a.ordem - b.ordem)
+  })()
 
-  // Filtrar o pipeline (se o pacote tiver um funil exclusivo, usa ele. Senão, usa o padrão)
-  const funilExclusivo = etapas.filter(e => e.pacote_id === form.tipo_servico)
+  // Filtrar o pipeline (se os serviços tiverem funis exclusivos, usa eles. Senão, usa o padrão)
+  const funilExclusivo = (() => {
+    if (!selectedService || !selectedService.pacote_servicos) return []
+    let funnels: Etapa[] = []
+    selectedService.pacote_servicos.forEach(ps => {
+      const srvFunnels = etapas.filter(e => e.pacote_id === ps.servico_id)
+      funnels.push(...srvFunnels)
+    })
+    return funnels.sort((a, b) => a.ordem - b.ordem)
+  })()
   const funilPadrão = etapas.filter(e => !e.pacote_id)
   const etapasVisiveis = funilExclusivo.length > 0 ? funilExclusivo : funilPadrão
 
@@ -98,6 +131,7 @@ export default function ModalNovoLead({ fotografoId, etapas, onLeadCriado, onClo
 
     const payload = {
       fotografo_id: fotografoId,
+      cliente_id: form.cliente_id || null,
       nome_cliente: form.nome_cliente,
       whatsapp_cliente: form.whatsapp_cliente || null,
       email_cliente: form.email_cliente || null,
@@ -186,8 +220,37 @@ export default function ModalNovoLead({ fotografoId, etapas, onLeadCriado, onClo
               {/* Informações Básicas do Lead */}
               <div style={{ padding: '16px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', background: 'var(--color-bg-base)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div className="form-group" style={{ margin: 0 }}>
-                  <label className="form-label"><User size={12} style={{ display: 'inline', marginRight: '5px' }} /> Nome do Cliente *</label>
-                  <input type="text" className="form-input" placeholder="Ex: Maria das Graças" value={form.nome_cliente} onChange={e => update('nome_cliente', e.target.value)} required autoFocus />
+                  <label className="form-label"><User size={12} style={{ display: 'inline', marginRight: '5px' }} /> Buscar Cliente Existente (Opcional)</label>
+                  <select 
+                    className="form-select" 
+                    value={form.cliente_id}
+                    onChange={e => {
+                      const clienteId = e.target.value;
+                      if (clienteId) {
+                        const cliente = clientes.find(c => c.id === clienteId);
+                        if (cliente) {
+                          setForm(prev => ({
+                            ...prev,
+                            cliente_id: cliente.id,
+                            nome_cliente: cliente.nome,
+                            whatsapp_cliente: cliente.whatsapp || prev.whatsapp_cliente,
+                            email_cliente: cliente.email || prev.email_cliente
+                          }))
+                        }
+                      } else {
+                        setForm(prev => ({ ...prev, cliente_id: '' }))
+                      }
+                    }}
+                    style={{ fontWeight: 500, fontSize: '0.875rem' }}
+                  >
+                    <option value="">-- Novo Cliente (Preencher os dados abaixo) --</option>
+                    {clientes.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                  </select>
+                </div>
+
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">Nome do Cliente *</label>
+                  <input type="text" className="form-input" placeholder="Ex: Maria das Graças" value={form.nome_cliente} onChange={e => update('nome_cliente', e.target.value)} required autoFocus={!form.cliente_id} />
                 </div>
 
                 <div className="form-grid-2">
@@ -206,7 +269,7 @@ export default function ModalNovoLead({ fotografoId, etapas, onLeadCriado, onClo
               {formFields.length > 0 && (
                 <div style={{ padding: '16px', border: '1px solid var(--color-accent-subtle)', borderRadius: 'var(--radius-lg)', background: 'var(--color-accent-subtle)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-accent)', fontWeight: 600, fontSize: '0.8125rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    <AlignLeft size={14} /> Briefing do Pacote
+                    <AlignLeft size={14} /> Briefing do Serviço
                   </div>
                   {formFields.map(field => (
                     <div key={field.id} className="form-group" style={{ margin: 0 }}>

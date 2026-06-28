@@ -1,0 +1,52 @@
+Product Requirement Document (PRD)
+Projeto: SaaS de Gestão de Serviços Fotográficos (MVP Premium)
+Versão: 2.0 (Atualizado para Desenvolvimento Baseado em IA)
+Abordagem: AI-First Deployment / Vibe Coding (Sem digitação de código tradicional)
+1. Visão Geral do Produto
+O sistema é uma plataforma SaaS Multi-Tenant (software como serviço para múltiplos estúdios) projetada para que fotógrafos gerem e automatizem toda a jornada do seu cliente — do primeiro contato à entrega final das fotos. O diferencial estratégico do produto está na hiper-personalização de funis, segurança jurídica com contratos automáticos, checkout flexível e um portal que eleva a experiência do cliente final (CX).
+2. Arquitetura Lógica de Dados (Modelo Supabase)
+Esta é a estrutura de tabelas relacionais que a IA criará no Supabase através de comandos em linguagem natural. Ela obedece à regra de que um contrato comercial pode gerar múltiplos eventos e diárias de campo.
+[perfil_fotografo] 
+       │
+       ├── (1:N) ── [modelos_contrato]
+       │
+       ├── (1:N) ── [etapas_pipeline] (Dita as colunas do Kanban de Vendas e Execução)
+       │
+       └── (1:N) ── [leads_propostas] (Pai / Registro Comercial)
+                           │
+                           └── (1:N) ── [sessoes_agenda] (Filho / Diárias de Campo)
+                                               │
+                                               └── (1:N) ── [midias_galeria]
+3. Matriz de Funcionalidades e Requisitos Técnicos
+🎛️ Módulo 1: Perfil do Estúdio e Configurações Gerais
+RF01 - Cadastro de Dados Institucionais: O fotógrafo deve cadastrar uma única vez seus dados (Nome Comercial, CPF/CNPJ, WhatsApp, Chave Pix, Endereço).
+RF02 - Integração Google Calendar: Botão de autenticação para o fotógrafo conectar sua conta Google e conceder permissão de gravação de eventos na sua agenda.
+RF03 - Biblioteca de Contratos por Tipo de Sessão: Área para o fotógrafo colar as minutas de seus contratos padrão, separadas por nicho (Ex: Newborn, Casamento, Corporativo).
+RF04 - Motor de Injeção de Variáveis: O sistema deve aceitar tags dinâmicas nas minutas. Ao gerar o documento final, a IA substitui automaticamente as tags do cliente ({{nome_cliente}}, {{valor_total}}) e as do fotógrafo ({{cnpj_fotografo}}, {{pix_estudio}}).
+📈 Módulo 2: Funil de Vendas (CRM) e Gestão de Propostas
+RF05 - Captura Inicial de Leads: Formulário para registrar o primeiro contato do cliente (Nome, WhatsApp, E-mail, Tipo de Serviço, Data Pretendida e Valor Estimado).
+RF06 - Pipelines de Vendas Dinâmicos: O fotógrafo pode criar, renomear e ordenar as colunas do seu funil comercial através de uma tela de configurações (Ex: Novo Lead ➡️ Reunião Agendada ➡️ Proposta Enviada).
+RF07 - Bifurcação de Desfecho Comercial:
+Cenário Ganhou: Atualiza status para "Aprovado", gera o Link Mágico do cliente e trava as datas na agenda em modo de reserva temporária.
+Cenário Perdeu: Abre pop-up solicitando o motivo (Preço, Falta de Data, Escolheu Concorrente, Sumiu), arquiva o lead e alimenta o dashboard de métricas de perda.
+📅 Módulo 3: Contratos e Arquitetura Multi-Sessão ($1:N$)
+RF08 - Suporte a Combos/Pacotes: O sistema deve permitir atrelar mais de uma sessão fotográfica ao mesmo contrato comercial (Ex: Pacote Maternidade criando um registro em Contratos e dois registros em Sessões: Parto e Newborn).
+RF09 - O Link Mágico do Cliente: Geração de uma URL única, segura e criptografada por projeto. Ao acessar, o cliente visualiza seu portal exclusivo sem precisar criar conta ou digitar senha.
+💳 Módulo 4: Checkout e Confirmação Automatizada
+RF10 - Gateway Multimeios Integrado: Integração (via Stripe ou Asaas) no Portal do Cliente apresentando três opções de pagamento para o sinal:
+Pix: Exibe QR Code e código Copia e Cola gerados na hora.
+Cartão de Crédito: Formulário seguro com opção de parcelamento em até 12x.
+Boleto Bancário: Opção de download do PDF e linha digitável.
+RF11 - Webhook de Confirmação: O sistema ouve o gateway. Assim que a compensação do sinal ocorre, o status do contrato muda para "Confirmado", disparando o Módulo 5.
+🚀 Módulo 5: Operacional, Agenda e Sincronização Google
+RF12 - Automação da Google Agenda: Ao confirmar o sinal, o sistema insere automaticamente os eventos criados no calendário Google do fotógrafo, gravando o google_event_id no Supabase para permitir remarcações futuras automáticas.
+RF13 - Convite Nativo para o Cliente: A automação do Google Calendar deve incluir o e-mail do cliente final como participante (attendee), forçando o disparo de um convite aceitável direto para a agenda do smartphone do cliente.
+RF14 - Esteira de Produção Customizada (Kanban): Painel operacional onde os projetos confirmados caminham por colunas criadas pelo fotógrafo (Ex: Pré-Produção ➡️ Fotografado ➡️ Em Edição ➡️ Pronto para Entrega).
+📱 Módulo 6: Portal do Cliente e Seleção de Mídias
+RF15 - Linha do Tempo Dinâmica: Interface onde o cliente final visualiza o progresso de cada uma das sessões do seu pacote em tempo real (atualizado conforme o fotógrafo move o Kanban).
+RF16 - Galeria de Seleção Inteligente: Tela onde as fotos brutas são exibidas em um grid elegante. O cliente seleciona as fotos desejadas clicando em um ícone de coração.
+RF17 - Proteção Anti-Print: Aplicação compulsória de marca d'água semitransparente sobre as fotos da galeria e bloqueio de clique direito/salvamento de imagem.
+RF18 - Trava de Limite e Monetização Extra: O sistema monitora o teto de fotos do contrato (Ex: 25/25). Se o cliente selecionar fotos a mais, exibe um banner dinâmico calculando o valor adicional (Ex: +3 fotos extras = R$ 90,00) e gera um checkout de cobrança complementar.
+4. Requisitos Não-Funcionais (Padrões Visuais)
+RNF01 - Painel do Fotógrafo (Dark Mode): Interface escura, minimalista, moderna, inspirada em softwares profissionais como Adobe Lightroom e Capture One.
+RNF02 - Portal do Cliente (Light Mode): Interface clara, limpa, focada em dispositivos móveis (Mobile-First), transmitindo sofisticação e leveza.
