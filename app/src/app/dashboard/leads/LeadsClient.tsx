@@ -30,6 +30,7 @@ type Lead = {
   whatsapp_cliente: string | null
   email_cliente: string | null
   tipo_servico: string
+  pacote_id?: string | null  // UUID de tipos_sessao — fonte confiável do funil do lead
   data_pretendida: string | null
   valor_estimado: number | null
   status: string
@@ -71,6 +72,21 @@ const ETAPAS_DEFAULT = [
   { nome_etapa: 'Aguardando Sinal', ordem: 4, cor_hex: '#34d399' },
 ]
 
+// Resolve o UUID do pacote/serviço do lead via pacote_id direto ou por correspondência de nome.
+// Aplica normalização que remove artigos portugueses para lidar com variações como
+// "Ensaio de gestante" vs "Ensaio Gestante".
+function resolveLeadPacoteId(lead: Lead, tiposSessao: TipoSessao[]): string | null {
+  if (lead.pacote_id) return lead.pacote_id
+  const strip = (s: string) =>
+    s.toLowerCase().replace(/\b(de|da|do|dos|das|e|o|a|os|as|em)\b/g, '').replace(/\s+/g, ' ').trim()
+  const normalTipo = strip(lead.tipo_servico)
+  return tiposSessao.find(t =>
+    t.nome.toLowerCase() === lead.tipo_servico.toLowerCase() ||
+    t.id === lead.tipo_servico ||
+    strip(t.nome) === normalTipo
+  )?.id ?? null
+}
+
 function formatCurrency(val: number | null) {
   if (!val) return '—'
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val)
@@ -109,8 +125,6 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
   const [dragOverEtapaId, setDragOverEtapaId] = useState<string | null>(null)
   const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const [filtroStatus, setFiltroStatus] = useState<string>('todos')
-  const [pipelineAtivo, setPipelineAtivo] = useState<string>('todos')
   const [showModal, setShowModal] = useState(false)
   const [modalPerdeu, setModalPerdeu] = useState<Lead | null>(null)
   const [modalGanhou, setModalGanhou] = useState<Lead | null>(null)
@@ -156,9 +170,9 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
     if (etapaId.includes(',')) {
       const lead = leads.find(l => l.id === leadId)
       if (lead) {
-        const servicoId = tiposSessao.find(t => t.nome.toLowerCase() === lead.tipo_servico.toLowerCase() || t.id === lead.tipo_servico)?.id
         const ids = etapaId.split(',')
-        const especifica = etapas.find(e => ids.includes(e.id) && e.pacote_id === servicoId)
+        const pacoteIdDoLead = resolveLeadPacoteId(lead, tiposSessao)
+        const especifica = etapas.find(e => ids.includes(e.id) && (e.pacote_id ?? null) === pacoteIdDoLead)
         if (especifica) {
           finalEtapaId = especifica.id
         } else {
@@ -270,53 +284,36 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
   const leadsFiltrados = leads.filter(l => {
     const matchSearch = l.nome_cliente.toLowerCase().includes(search.toLowerCase()) ||
       (l.email_cliente ?? '').toLowerCase().includes(search.toLowerCase())
-    const matchStatus = filtroStatus === 'todos' || l.status === filtroStatus
-    return matchSearch && matchStatus
+    return matchSearch
   })
 
-  const leadsAtivos = leadsFiltrados.filter(l => !['perdido', 'arquivado'].includes(l.status))
   const leadsKanban = leadsFiltrados.filter(l => !['perdido', 'arquivado', 'aprovado', 'confirmado'].includes(l.status))
 
-  // Pipelines disponíveis e filtro
-  const funisDisponiveis = [
-    { id: 'todos', nome: 'Todos os Funis' },
-    { id: 'padrao', nome: 'Funil Padrão' },
-    ...tiposSessao
-      .filter(t => etapas.some(e => e.pacote_id === t.id))
-      .map(t => ({ id: t.id, nome: `Funil: ${t.nome}` }))
-  ]
-
-  let etapasKanban: Etapa[] = []
-  if (pipelineAtivo === 'todos') {
-    const grupos = new Map<string, Etapa[]>()
-    etapas.forEach(e => {
-      const key = e.nome_etapa.trim().toLowerCase()
-      if (!grupos.has(key)) grupos.set(key, [])
-      grupos.get(key)!.push(e)
-    })
-    etapasKanban = Array.from(grupos.values()).map(grupo => {
-      const p = grupo[0]
-      return {
-        id: grupo.map(g => g.id).join(','),
-        nome_etapa: p.nome_etapa,
-        ordem: Math.min(...grupo.map(g => g.ordem)),
-        cor_hex: p.cor_hex,
-        tipo_pipeline: p.tipo_pipeline,
-        meta_acoes: p.meta_acoes,
-        transicoes_permitidas: p.transicoes_permitidas
-      }
-    }).sort((a, b) => a.ordem - b.ordem)
-  } else {
-    etapasKanban = etapas.filter(e => pipelineAtivo === 'padrao' ? !e.pacote_id : e.pacote_id === pipelineAtivo)
-  }
-  
-  const leadsGanhosAtuais = leads.filter(l => {
-    if (!['aprovado', 'confirmado'].includes(l.status)) return false;
-    if (pipelineAtivo === 'todos') return true;
-    const etapa = etapas.find(e => e.id === l.etapa_pipeline_id);
-    if (pipelineAtivo === 'padrao') return !etapa || !etapa.pacote_id;
-    return etapa?.pacote_id === pipelineAtivo;
+  // Agrupa etapas de TODOS os funis por nome (colunas unificadas visualmente).
+  // Estágios exclusivos de um serviço (ex: "Follow Up" do Ensaio Gestante) aparecem
+  // como coluna própria. Cada grupo recebe um id composto "uuid1,uuid2,..." que o
+  // moverParaEtapa usa para escolher a etapa correta conforme o pacote do lead.
+  const gruposEtapa = new Map<string, Etapa[]>()
+  etapas.forEach(e => {
+    const key = e.nome_etapa.trim().toLowerCase()
+    if (!gruposEtapa.has(key)) gruposEtapa.set(key, [])
+    gruposEtapa.get(key)!.push(e)
   })
+  const etapasKanban = Array.from(gruposEtapa.values()).map(grupo => {
+    const p = grupo[0]
+    return {
+      id: grupo.map(g => g.id).join(','),
+      nome_etapa: p.nome_etapa,
+      ordem: Math.min(...grupo.map(g => g.ordem)),
+      cor_hex: p.cor_hex,
+      tipo_pipeline: p.tipo_pipeline,
+      meta_acoes: p.meta_acoes,
+      transicoes_permitidas: p.transicoes_permitidas,
+      pacote_id: p.pacote_id,
+    }
+  }).sort((a, b) => a.ordem - b.ordem)
+
+  const leadsGanhosAtuais = leads.filter(l => ['aprovado', 'confirmado'].includes(l.status))
 
   // Métricas rápidas
   const totalLeads = leads.filter(l => l.status !== 'perdido').length
@@ -369,9 +366,9 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
           })}
         </div>
 
-        {/* Barra de busca + filtros */}
-        <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
-          <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>
+        {/* Barra de busca */}
+        <div style={{ marginBottom: '20px' }}>
+          <div style={{ position: 'relative' }}>
             <Search size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)', pointerEvents: 'none' }} />
             <input
               type="text"
@@ -381,22 +378,6 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
               onChange={e => setSearch(e.target.value)}
               style={{ paddingLeft: '36px' }}
             />
-          </div>
-          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-            {['todos', 'novo', 'em_negociacao', 'proposta_enviada', 'aprovado', 'perdido'].map(s => (
-              <button
-                key={s}
-                onClick={() => setFiltroStatus(s)}
-                className="btn btn-sm"
-                style={{
-                  background: filtroStatus === s ? 'var(--color-accent-subtle)' : 'var(--color-bg-elevated)',
-                  color: filtroStatus === s ? 'var(--color-accent)' : 'var(--color-text-secondary)',
-                  border: `1px solid ${filtroStatus === s ? 'var(--color-accent)' : 'var(--color-border)'}`,
-                }}
-              >
-                {s === 'todos' ? 'Todos' : STATUS_LABELS[s]}
-              </button>
-            ))}
           </div>
         </div>
 
@@ -419,21 +400,6 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
         {/* KANBAN VIEW */}
         {view === 'kanban' && etapas.length > 0 && (
           <div className="animate-fade-in">
-            {funisDisponiveis.length > 1 && (
-              <div style={{ marginBottom: '16px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', fontWeight: 500 }}>Visualizando:</span>
-                <select 
-                  className="form-select form-select-sm" 
-                  style={{ width: 'auto', minWidth: '180px', padding: '6px 12px', fontSize: '0.8125rem' }}
-                  value={pipelineAtivo} 
-                  onChange={e => setPipelineAtivo(e.target.value)}
-                >
-                  {funisDisponiveis.map(f => (
-                    <option key={f.id} value={f.id}>{f.nome}</option>
-                  ))}
-                </select>
-              </div>
-            )}
             <div style={{ display: 'flex', gap: '14px', overflowX: 'auto', paddingBottom: '16px', alignItems: 'flex-start' }}>
               {etapasKanban.map(etapa => {
                 const leadsEtapa = leadsKanban.filter(l => l.etapa_pipeline_id && etapa.id.includes(l.etapa_pipeline_id))
@@ -441,16 +407,39 @@ export default function LeadsClient({ fotografoId, etapasIniciais, leadsIniciais
                 const leadArrastado = draggedLeadId ? leads.find(l => l.id === draggedLeadId) : null
                 let isAllowed = true
                 if (leadArrastado) {
-                  const etapaOrigem = etapas.find(e => e.id === leadArrastado.etapa_pipeline_id)
-                  if (etapaOrigem && etapaOrigem.transicoes_permitidas && etapaOrigem.transicoes_permitidas.length > 0) {
-                    isAllowed = etapaOrigem.transicoes_permitidas.includes(etapa.ordem) || etapa.id.includes(etapaOrigem.id)
+                  const targetIds = etapa.id.split(',')
+                  const ehEtapaOrigem = leadArrastado.etapa_pipeline_id
+                    ? targetIds.includes(leadArrastado.etapa_pipeline_id)
+                    : false
+
+                  if (!ehEtapaOrigem) {
+                    const pacoteIdDoLead = resolveLeadPacoteId(leadArrastado, tiposSessao)
+
+                    const etapaDestinoNoFunil = etapas.find(e =>
+                      targetIds.includes(e.id) && (e.pacote_id ?? null) === pacoteIdDoLead
+                    )
+
+                    if (!etapaDestinoNoFunil) {
+                      isAllowed = false
+                    } else {
+                      const etapaAtual = etapas.find(e => e.id === leadArrastado.etapa_pipeline_id)
+                      const etapaOrigemNoFunil = etapas.find(e =>
+                        (e.pacote_id ?? null) === pacoteIdDoLead &&
+                        e.nome_etapa.trim().toLowerCase() === (etapaAtual?.nome_etapa ?? '').trim().toLowerCase()
+                      )
+                      const regras = etapaOrigemNoFunil?.transicoes_permitidas ?? etapaAtual?.transicoes_permitidas
+                      if (regras && regras.length > 0) {
+                        isAllowed = regras.includes(etapaDestinoNoFunil.ordem)
+                      }
+                    }
                   }
                 }
 
                 return (
                 <div key={etapa.id}
                   onDragOver={(e) => {
-                    e.preventDefault();
+                    // Só chama preventDefault (sinaliza drop permitido ao browser) se for coluna ou etapa permitida
+                    if (draggedColumnId || isAllowed) e.preventDefault();
                     if (!draggedColumnId && !isAllowed) return;
                     setDragOverEtapaId(etapa.id)
                   }}
